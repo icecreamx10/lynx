@@ -103,6 +103,9 @@ Value LynxModule::get(Runtime* runtime, const PropNameID& prop) {
           return lock_module->invokeMethod(*(meta.get()), &rt, args, count);
         });
   } else {
+    if (name_ == "nodejs" && propNameUtf8 == "getExposed") {
+      return Value(*runtime, node_api_);
+    }
     auto attr = this->getAttributeValue(runtime, propNameUtf8);
     if (!attr.isUndefined()) {
       return attr;
@@ -120,6 +123,15 @@ Value LynxModule::get(Runtime* runtime, const PropNameID& prop) {
     return Value::undefined();
   }
 }
+
+void LynxModule::set(Runtime* runtime, const PropNameID& prop, const Value& value) {
+  std::string propNameUtf8 = prop.utf8(*runtime);
+  if (name_ == "nodejs" && propNameUtf8 == "getExposed") {
+    node_api_ = Value(*runtime, value);
+    return;
+  }
+}
+
 }  // namespace js
 }  // namespace runtime
 }  // namespace lynx

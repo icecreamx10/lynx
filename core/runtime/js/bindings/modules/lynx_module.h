@@ -48,6 +48,8 @@ class LynxModule : public HostObject,
 
   Value get(Runtime* rt, const PropNameID& prop) override;
 
+  void set(Runtime* rt, const PropNameID& prop, const Value& value) override;
+
   const std::string name_;
   // Public for NetworkInterceptor. When Refactor network finished, protected
   // this.
@@ -87,6 +89,7 @@ class LynxModule : public HostObject,
 
  protected:
   std::unordered_map<std::string, std::shared_ptr<MethodMetadata>> methodMap_;
+  Value node_api_ = Value::undefined();
   std::shared_ptr<GroupInterceptor> group_interceptor_;
 #if ENABLE_TESTBENCH_RECORDER
   ALLOW_UNUSED_TYPE int64_t record_id_ = 0;
