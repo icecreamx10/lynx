@@ -59,6 +59,9 @@ class VSyncMonitor;
 namespace css {
 class CascadeLayerMap;
 }  // namespace css
+namespace editing {
+class EditingHostRegistry;
+}  // namespace editing
 namespace runtime {
 class MTSRuntime;
 }  // namespace runtime
@@ -278,6 +281,9 @@ class ElementManager : public LayoutScheduler::LayoutSchedulerImpl {
   bool GetDevToolFlag() { return devtool_flag_; }
 
   PaintingContext *painting_context();
+  editing::EditingHostRegistry *editing_host_registry() {
+    return editing_host_registry_.get();
+  }
   inline Catalyzer *catalyzer() { return catalyzer_.get(); }
   inline NodeManager *node_manager() { return node_manager_.get(); }
 
@@ -1392,6 +1398,8 @@ class ElementManager : public LayoutScheduler::LayoutSchedulerImpl {
   std::unique_ptr<NodeManager> node_manager_;
 
   std::unique_ptr<ComponentManager> component_manager_;
+  // Outlives the platform painting context, which holds a non-owning pointer.
+  std::unique_ptr<editing::EditingHostRegistry> editing_host_registry_;
   std::unique_ptr<Catalyzer> catalyzer_;
   Element *root_{nullptr};
   std::weak_ptr<HierarchyObserver> hierarchy_observer_;

@@ -31,6 +31,10 @@ ui_wrapper_painting_shared_deps = [
 
 if (!enable_unittests) {
   if (is_android) {
+    ui_wrapper_painting_shared_deps += [
+      "../../editing",
+      "../../../../platform/android/lynx_android:editing_adapter",
+    ]
     ui_wrapper_painting_shared_sources += [
       "android/native_painting_context_android.cc",
       "android/native_painting_context_android.h",
@@ -56,6 +60,7 @@ if (!enable_unittests) {
       "harmony/ui_delegate_harmony.h",
     ]
   } else if (is_ios) {
+    ui_wrapper_painting_shared_deps += [ "../../editing" ]
     ui_wrapper_painting_shared_sources += [
       "ios/native_painting_context_darwin.h",
       "ios/native_painting_context_darwin.mm",

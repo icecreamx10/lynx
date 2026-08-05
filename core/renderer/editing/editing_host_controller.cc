@@ -226,20 +226,66 @@ EditingPlatformResult EditingHostController::SetSelectionFromPoint(
                       expected_revision);
 }
 
-std::vector<EditContextRect> EditingHostController::SelectionRects(
-    TextRange selection, uint64_t expected_revision) const {
-  if (!geometry_ || expected_revision != edit_context_.revision() ||
-      !geometry_->Covers(selection)) {
-    return {};
+EditingSelectionRectsResult EditingHostController::QuerySelectionRects(
+    TextRange selection, uint64_t expected_revision) {
+  if (!IsActive()) {
+    return {EditingOperationStatus::kInactive, {}};
+  }
+  if (expected_revision != edit_context_.revision()) {
+    return {EditingOperationStatus::kStaleRevision, {}};
+  }
+  if (selection.base() > projection_.text().size() ||
+      selection.extent() > projection_.text().size()) {
+    return {EditingOperationStatus::kInvalidRange, {}};
+  }
+  if (!geometry_ || !geometry_->Covers(selection)) {
+    if (delegate_) {
+      delegate_->OnGeometryRequested(selection, edit_context_.revision(),
+                                     projection_revision_);
+    }
+    return {EditingOperationStatus::kGeometryUnavailable, {}};
   }
   std::vector<EditContextRect> result;
+  if (selection.collapsed()) {
+    const size_t position = selection.position();
+    if (projection_.text().empty() && position == 0) {
+      EditContextRect caret = geometry_->control_bounds;
+      caret.width = 0;
+      return {EditingOperationStatus::kAccepted, {caret}};
+    }
+    for (const EditingLayoutUnit& unit : geometry_->units) {
+      const bool at_leading_edge = unit.projection_offset == position;
+      const bool at_trailing_edge = unit.projection_offset + 1 == position;
+      if (!at_leading_edge && !at_trailing_edge) {
+        continue;
+      }
+      EditContextRect caret = unit.bounds;
+      const bool right_to_left =
+          (static_cast<uint8_t>(unit.flags) &
+           static_cast<uint8_t>(EditingLayoutUnitFlag::kRightToLeft)) != 0;
+      const bool use_right_edge =
+          at_leading_edge ? right_to_left : !right_to_left;
+      caret.x += use_right_edge ? caret.width : 0;
+      caret.width = 0;
+      result.push_back(caret);
+      break;
+    }
+    if (result.empty()) {
+      if (delegate_) {
+        delegate_->OnGeometryRequested(selection, edit_context_.revision(),
+                                       projection_revision_);
+      }
+      return {EditingOperationStatus::kGeometryUnavailable, {}};
+    }
+    return {EditingOperationStatus::kAccepted, std::move(result)};
+  }
   for (const EditingLayoutUnit& unit : geometry_->units) {
     if (unit.projection_offset >= selection.start() &&
         unit.projection_offset < selection.end()) {
       result.push_back(unit.bounds);
     }
   }
-  return result;
+  return {EditingOperationStatus::kAccepted, std::move(result)};
 }
 
 EditingPlatformResult EditingHostController::Result(

@@ -24,6 +24,7 @@ lynx_core_source_set("editing") {
 unittest_set("editing_testset") {
   sources = [
     "edit_context_model_unittest.cc",
+    "editing_host_registry_unittest.cc",
     "editing_host_controller_unittest.cc",
     "editing_platform_contract_unittest.cc",
     "editing_projection_unittest.cc",

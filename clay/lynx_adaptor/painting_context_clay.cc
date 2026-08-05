@@ -15,15 +15,19 @@
 #include "clay/lynx_adaptor/platform_extra_bundle_clay.h"
 #include "clay/lynx_adaptor/platform_node_tag_resolver.h"
 #include "clay/lynx_adaptor/prop_bundle_impl.h"
+#include "clay/lynx_adaptor/text_edit_context_session_clay.h"
 #include "clay/lynx_adaptor/value_converter.h"
 #include "clay/public/value.h"
 #include "clay/ui/common/value_utils.h"
 #include "clay/ui/component/base_view.h"
 #include "clay/ui/component/list/lynx_list_data.h"
+#include "clay/ui/component/text/text_view.h"
 #include "clay/ui/lynx_module/type_utils.h"
 #include "clay/ui/shadow/text_render.h"
 #include "core/base/trace/trace_event_def.h"
 #include "core/renderer/css/css_property_id.h"
+#include "core/renderer/editing/editing_host_controller.h"
+#include "core/renderer/editing/editing_host_registry.h"
 
 namespace lynx {
 
@@ -147,8 +151,78 @@ PaintingContextClay::PaintingContextClay(clay::ViewContext* view_context)
 }
 
 PaintingContextClay::~PaintingContextClay() {
+  SetEditingHostRegistry(nullptr);
   view_context_->SetUIComponentDelegate(nullptr);
   view_context_->ResetPageView();
+}
+
+void PaintingContextClay::SetEditingHostRegistry(
+    editing::EditingHostRegistry* registry) {
+  if (editing_host_registry_ == registry) {
+    return;
+  }
+  if (editing_host_registry_ && editing_host_observer_id_ != 0) {
+    editing_host_registry_->RemoveLifecycleObserver(
+        editing_host_observer_id_);
+  }
+  editing_host_registry_ = registry;
+  editing_host_observer_id_ = 0;
+  edit_context_sessions_.clear();
+  if (!registry) {
+    return;
+  }
+
+  auto handle_lifecycle =
+      [this, registry](int64_t host_id,
+                       editing::EditingHostLifecycleEvent event) {
+        std::shared_ptr<editing::EditingPlatformSession> platform_session;
+        if (event == editing::EditingHostLifecycleEvent::kAttached) {
+          platform_session = registry->Lookup(host_id);
+        }
+        Enqueue([this, host_id, event,
+                 platform_session = std::move(platform_session)]() mutable {
+          switch (event) {
+            case editing::EditingHostLifecycleEvent::kAttached: {
+              clay::BaseView* view = view_context_->GetViewById(
+                  static_cast<int>(host_id));
+              if (!view || !view->Is<clay::TextView>() || !platform_session) {
+                return;
+              }
+              edit_context_sessions_[host_id] =
+                  std::make_unique<TextEditContextSessionClay>(
+                      static_cast<clay::TextView*>(view),
+                      std::move(platform_session));
+              break;
+            }
+            case editing::EditingHostLifecycleEvent::kActivated: {
+              auto it = edit_context_sessions_.find(host_id);
+              if (it != edit_context_sessions_.end()) {
+                it->second->Activate();
+              }
+              break;
+            }
+            case editing::EditingHostLifecycleEvent::kDeactivated: {
+              auto it = edit_context_sessions_.find(host_id);
+              if (it != edit_context_sessions_.end()) {
+                it->second->Deactivate();
+              }
+              break;
+            }
+            case editing::EditingHostLifecycleEvent::kDetached:
+              edit_context_sessions_.erase(host_id);
+              break;
+          }
+        });
+      };
+  editing_host_observer_id_ =
+      registry->AddLifecycleObserver(handle_lifecycle);
+  for (int64_t host_id : registry->host_ids()) {
+    handle_lifecycle(host_id, editing::EditingHostLifecycleEvent::kAttached);
+  }
+  if (registry->active_host_id()) {
+    handle_lifecycle(*registry->active_host_id(),
+                     editing::EditingHostLifecycleEvent::kActivated);
+  }
 }
 
 void PaintingContextClay::Flush() { ui_operation_queue_ref_->Flush(); }

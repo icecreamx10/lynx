@@ -21,6 +21,8 @@
 #include "core/renderer/css/css_style_utils.h"
 #include "core/renderer/dom/android/lepus_message_consumer.h"
 #include "core/renderer/dom/android/lynx_template_bundle_android.h"
+#include "core/renderer/editing/editing_host_controller.h"
+#include "core/renderer/editing/editing_host_registry.h"
 #include "core/renderer/tasm/react/android/mapbuffer/readable_compact_array_buffer.h"
 #include "core/renderer/ui_wrapper/common/android/platform_extra_bundle_android.h"
 #include "core/renderer/ui_wrapper/common/android/prop_bundle_android.h"
@@ -34,6 +36,7 @@
 #include "core/value_wrapper/value_impl_lepus.h"
 #include "platform/android/lynx_android/src/main/jni/gen/PaintingContext_jni.h"
 #include "platform/android/lynx_android/src/main/jni/gen/PaintingContext_register_jni.h"
+#include "platform/android/lynx_android/src/main/cpp/editing/editing_session_android.h"
 
 namespace lynx {
 namespace jni {
@@ -414,6 +417,74 @@ PaintingContextAndroid::PaintingContextAndroid(JNIEnv* env, jobject impl,
         std::make_unique<TextLayoutTextra>(static_cast<intptr_t>(textra));
   } else if (text_layout != nullptr) {
     text_layout_impl_ = std::make_unique<TextLayoutAndroid>(env, text_layout);
+  }
+}
+
+PaintingContextAndroid::~PaintingContextAndroid() {
+  SetEditingHostRegistry(nullptr);
+}
+
+void PaintingContextAndroid::SetEditingHostRegistry(
+    editing::EditingHostRegistry* registry) {
+  if (editing_host_registry_ == registry) {
+    return;
+  }
+  if (editing_host_registry_ && editing_host_observer_id_ != 0) {
+    editing_host_registry_->RemoveLifecycleObserver(
+        editing_host_observer_id_);
+  }
+  editing_host_registry_ = registry;
+  editing_host_observer_id_ = 0;
+  if (!registry) {
+    return;
+  }
+
+  auto handle_lifecycle =
+      [this, registry](int64_t host_id,
+                       editing::EditingHostLifecycleEvent event) {
+        std::shared_ptr<editing::EditingPlatformSession> session;
+        if (event == editing::EditingHostLifecycleEvent::kAttached) {
+          session = registry->Lookup(host_id);
+        }
+        Enqueue([impl = impl_, host_id, event,
+                 session = std::move(session)]() mutable {
+          JNIEnv* env = base::android::AttachCurrentThread();
+          base::android::ScopedLocalJavaRef<jobject> painting_context(*impl);
+          if (painting_context.IsNull()) {
+            return;
+          }
+          base::android::ScopedLocalJavaRef<jobject> android_text =
+              Java_PaintingContext_getTextEditContextHost(
+                  env, painting_context.Get(), static_cast<jint>(host_id));
+          if (android_text.IsNull()) {
+            return;
+          }
+          switch (event) {
+            case editing::EditingHostLifecycleEvent::kAttached:
+              editing::AttachEditingSessionAndroid(
+                  env, android_text.Get(), std::move(session));
+              break;
+            case editing::EditingHostLifecycleEvent::kActivated:
+              editing::ActivateEditingSessionAndroid(env, android_text.Get());
+              break;
+            case editing::EditingHostLifecycleEvent::kDeactivated:
+              editing::DeactivateEditingSessionAndroid(env,
+                                                       android_text.Get());
+              break;
+            case editing::EditingHostLifecycleEvent::kDetached:
+              editing::DetachEditingSessionAndroid(env, android_text.Get());
+              break;
+          }
+        });
+      };
+  editing_host_observer_id_ =
+      registry->AddLifecycleObserver(handle_lifecycle);
+  for (int64_t host_id : registry->host_ids()) {
+    handle_lifecycle(host_id, editing::EditingHostLifecycleEvent::kAttached);
+  }
+  if (registry->active_host_id()) {
+    handle_lifecycle(*registry->active_host_id(),
+                     editing::EditingHostLifecycleEvent::kActivated);
   }
 }
 

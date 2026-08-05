@@ -31,6 +31,7 @@ import com.lynx.tasm.behavior.shadow.text.TextUpdateBundle;
 import com.lynx.tasm.behavior.ui.LynxBaseUI;
 import com.lynx.tasm.behavior.ui.PropBundle;
 import com.lynx.tasm.behavior.ui.list.container.UIListContainer;
+import com.lynx.tasm.behavior.ui.text.AndroidText;
 import com.lynx.tasm.behavior.ui.text.FlattenUIText;
 import com.lynx.tasm.behavior.ui.text.UIText;
 import com.lynx.tasm.behavior.ui.view.UIComponent;
@@ -240,6 +241,12 @@ public final class PaintingContext implements IPaintingContext {
       return charSequenceToString(((FlattenUIText) ui).getOriginText());
     }
     return null;
+  }
+
+  @CalledByNative
+  private AndroidText getTextEditContextHost(int sign) {
+    LynxBaseUI ui = mUIOwner != null ? mUIOwner.getNode(sign) : null;
+    return ui instanceof UIText ? ((UIText) ui).getView() : null;
   }
 
   private String snapshotTextExtraData(Object data) {

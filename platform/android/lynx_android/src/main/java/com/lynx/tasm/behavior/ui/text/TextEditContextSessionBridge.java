@@ -7,46 +7,49 @@ package com.lynx.tasm.behavior.ui.text;
 import java.lang.ref.WeakReference;
 
 final class TextEditContextSessionBridge implements TextEditContextSession {
-  private final long mHostId;
   private WeakReference<AndroidText> mHostView = new WeakReference<>(null);
-  private long mNativeLayoutSessionPtr;
-  private long mRegistryPtr;
+  private long mNativeSessionPtr;
 
-  private native boolean nativeActivate(long j, long j2);
+  private native boolean nativeActivate(long nativeSessionPtr);
 
-  private native TextEditContextResult nativeApplyTransaction(long j, long j2, String str, int i,
-      int i2, String str2, int i3, int i4, int i5, int i6, long j3);
+  private native TextEditContextResult nativeApplyTransaction(long nativeSessionPtr,
+      String inputType, boolean updatesText, int rangeStart, int rangeEnd, String replacement,
+      int selectionBase, int selectionExtent, int compositionStart, int compositionEnd,
+      long expectedRevision);
 
-  private native void nativeDeactivate(long j, long j2);
+  private native void nativeBind(long nativeSessionPtr);
 
-  private native void nativeDestroyLayoutSession(long j);
+  private native void nativeDeactivate(long nativeSessionPtr);
 
-  private native TextEditContextLayoutSnapshot nativeGetLayoutSnapshot(long j);
+  private native void nativeDestroy(long nativeSessionPtr);
 
-  private native float[] nativeGetSelectionRects(long j, int i, int i2);
+  private native TextEditContextLayoutSnapshot nativeGetProjectionSnapshot(long nativeSessionPtr);
 
-  private native TextEditContextSnapshot nativeGetSnapshot(long j, long j2);
+  private native float[] nativeGetSelectionRects(
+      long nativeSessionPtr, int selectionBase, int selectionExtent, long expectedRevision);
 
-  private native boolean nativeIsActive(long j, long j2);
+  private native TextEditContextSnapshot nativeGetSnapshot(long nativeSessionPtr);
+
+  private native boolean nativeIsActive(long nativeSessionPtr);
 
   private native TextEditContextResult nativePerformInput(
-      long j, long j2, String str, String str2, long j3);
+      long nativeSessionPtr, String inputType, String data, long expectedRevision);
 
   private native TextEditContextResult nativeSetSelectionFromPoint(
-      long j, float f, float f2, int i, long j2);
+      long nativeSessionPtr, float x, float y, int anchor, long expectedRevision);
 
-  private native boolean nativeUpdateLayout(long j, long j2, float[] fArr, long[] jArr,
-      long[] jArr2, int[] iArr, int[] iArr2, float[] fArr2, int[] iArr3, int[] iArr4);
+  private native boolean nativeUpdateGeometry(long nativeSessionPtr, long stateRevision,
+      long projectionRevision, int projectionLength, int coverageStart, int coverageEnd,
+      float[] controlBounds, int[] projectionOffsets, long[] segmentIds, long[] ownerIds,
+      int[] localStarts, int[] localEnds, float[] bounds, int[] flags, int[] boundaryEdges);
 
-  private TextEditContextSessionBridge(long nativeLayoutSessionPtr, long registryPtr, long hostId) {
-    this.mNativeLayoutSessionPtr = nativeLayoutSessionPtr;
-    this.mRegistryPtr = registryPtr;
-    this.mHostId = hostId;
+  private TextEditContextSessionBridge(long nativeSessionPtr) {
+    this.mNativeSessionPtr = nativeSessionPtr;
+    nativeBind(nativeSessionPtr);
   }
 
-  static TextEditContextSessionBridge create(
-      long nativeLayoutSessionPtr, long registryPtr, long hostId) {
-    return new TextEditContextSessionBridge(nativeLayoutSessionPtr, registryPtr, hostId);
+  static TextEditContextSessionBridge create(long nativeSessionPtr) {
+    return new TextEditContextSessionBridge(nativeSessionPtr);
   }
 
   static TextEditContextSnapshot createSnapshot(String text, int selectionBase, int selectionExtent,
@@ -56,14 +59,15 @@ final class TextEditContextSessionBridge implements TextEditContextSession {
   }
 
   static TextEditContextResult createResult(
-      boolean accepted, boolean restartInput, TextEditContextSnapshot snapshot) {
-    return new TextEditContextResult(accepted, restartInput, snapshot);
+      int status, boolean restartInput, TextEditContextSnapshot snapshot) {
+    return new TextEditContextResult(status, restartInput, snapshot);
   }
 
-  static TextEditContextLayoutSnapshot createLayoutSnapshot(long revision, long[] segmentIds,
-      long[] ownerIds, int[] kinds, int[] starts, int[] ends, int[] boundaryEdges, String[] texts) {
-    return new TextEditContextLayoutSnapshot(
-        revision, segmentIds, ownerIds, kinds, starts, ends, boundaryEdges, texts);
+  static TextEditContextLayoutSnapshot createLayoutSnapshot(long stateRevision,
+      long projectionRevision, int length, long[] segmentIds, long[] ownerIds, int[] kinds,
+      int[] starts, int[] ends, int[] boundaryEdges, String[] texts) {
+    return new TextEditContextLayoutSnapshot(stateRevision, projectionRevision, length, segmentIds,
+        ownerIds, kinds, starts, ends, boundaryEdges, texts);
   }
 
   static void attach(AndroidText view, TextEditContextSessionBridge session) {
@@ -85,108 +89,137 @@ final class TextEditContextSessionBridge implements TextEditContextSession {
 
   static void activate(AndroidText view) {
     if (view != null) {
-      view.activateTextEditContext();
+      view.post(view::activateTextEditContext);
     }
   }
 
   static void deactivate(AndroidText view) {
     if (view != null) {
-      view.deactivateTextEditContext();
+      view.post(view::deactivateTextEditContext);
+    }
+  }
+
+  static void activationChanged(final TextEditContextSessionBridge session, final boolean active) {
+    AndroidText view;
+    if (session != null && (view = session.mHostView.get()) != null) {
+      final AndroidText hostView = view;
+      view.post(() -> {
+        if (!hostView.isTextEditContextSession(session)) {
+          return;
+        }
+        if (active) {
+          hostView.activateTextEditContext();
+        } else {
+          hostView.deactivateTextEditContext();
+        }
+      });
+    }
+  }
+
+  static void geometryRequested(final TextEditContextSessionBridge session, int rangeStart,
+      int rangeEnd, long stateRevision, long projectionRevision) {
+    AndroidText view;
+    if (session != null && (view = session.mHostView.get()) != null) {
+      view.post(view::refreshTextEditContextGeometry);
     }
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public TextEditContextSnapshot snapshot() {
-    long j = this.mRegistryPtr;
-    if (j == 0) {
+    long nativePtr = this.mNativeSessionPtr;
+    if (nativePtr == 0) {
       return null;
     }
-    return nativeGetSnapshot(j, this.mHostId);
+    return nativeGetSnapshot(nativePtr);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public TextEditContextResult apply(TextEditContextSession.Transaction transaction) {
-    long j = this.mRegistryPtr;
-    if (j == 0) {
-      return new TextEditContextResult(false, false, null);
+    long nativePtr = this.mNativeSessionPtr;
+    if (nativePtr == 0) {
+      return new TextEditContextResult(TextEditContextResult.STATUS_INACTIVE, false, null);
     }
-    return nativeApplyTransaction(j, this.mHostId, transaction.inputType, transaction.rangeStart,
-        transaction.rangeEnd, transaction.replacement, transaction.selectionBase,
-        transaction.selectionExtent, transaction.compositionStart, transaction.compositionEnd,
-        transaction.expectedRevision);
+    return nativeApplyTransaction(nativePtr, transaction.inputType, transaction.updatesText,
+        transaction.rangeStart, transaction.rangeEnd, transaction.replacement,
+        transaction.selectionBase, transaction.selectionExtent, transaction.compositionStart,
+        transaction.compositionEnd, transaction.expectedRevision);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public TextEditContextResult performInput(String inputType, String data, long expectedRevision) {
-    long j = this.mRegistryPtr;
-    if (j == 0) {
-      return new TextEditContextResult(false, false, null);
+    long nativePtr = this.mNativeSessionPtr;
+    if (nativePtr == 0) {
+      return new TextEditContextResult(TextEditContextResult.STATUS_INACTIVE, false, null);
     }
-    return nativePerformInput(j, this.mHostId, inputType, data, expectedRevision);
+    return nativePerformInput(nativePtr, inputType, data, expectedRevision);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public boolean activate() {
-    long j = this.mRegistryPtr;
-    return j != 0 && nativeActivate(j, this.mHostId);
+    long nativePtr = this.mNativeSessionPtr;
+    return nativePtr != 0 && nativeActivate(nativePtr);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public void deactivate() {
-    long j = this.mRegistryPtr;
-    if (j != 0) {
-      nativeDeactivate(j, this.mHostId);
+    long nativePtr = this.mNativeSessionPtr;
+    if (nativePtr != 0) {
+      nativeDeactivate(nativePtr);
     }
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public boolean isActive() {
-    long j = this.mRegistryPtr;
-    return j != 0 && nativeIsActive(j, this.mHostId);
+    long nativePtr = this.mNativeSessionPtr;
+    return nativePtr != 0 && nativeIsActive(nativePtr);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public boolean refreshLayout(AndroidText hostView) {
     TextEditContextLayoutSnapshot projection;
     TextEditContextLayoutData layout;
-    long j = this.mNativeLayoutSessionPtr;
-    return (j == 0 || hostView == null || (projection = nativeGetLayoutSnapshot(j)) == null
+    long nativePtr = this.mNativeSessionPtr;
+    return (nativePtr == 0 || hostView == null
+               || (projection = nativeGetProjectionSnapshot(nativePtr)) == null
                || (layout = TextEditContextLayoutCollector.collect(hostView, projection)) == null
-               || !nativeUpdateLayout(this.mNativeLayoutSessionPtr, layout.revision,
-                   layout.controlBounds, layout.segmentIds, layout.ownerIds, layout.localStarts,
-                   layout.localEnds, layout.bounds, layout.flags, layout.boundaryEdges))
+               || !nativeUpdateGeometry(nativePtr, layout.stateRevision, layout.projectionRevision,
+                   layout.projectionLength, layout.coverageStart, layout.coverageEnd,
+                   layout.controlBounds, layout.projectionOffsets, layout.segmentIds,
+                   layout.ownerIds, layout.localStarts, layout.localEnds, layout.bounds,
+                   layout.flags, layout.boundaryEdges))
         ? false
         : true;
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public float[] selectionRects(int selectionBase, int selectionExtent) {
-    long j = this.mNativeLayoutSessionPtr;
-    if (j == 0) {
+    long nativePtr = this.mNativeSessionPtr;
+    TextEditContextSnapshot state = snapshot();
+    if (nativePtr == 0 || state == null) {
       return new float[0];
     }
-    return nativeGetSelectionRects(j, selectionBase, selectionExtent);
+    return nativeGetSelectionRects(nativePtr, selectionBase, selectionExtent, state.revision);
   }
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public TextEditContextResult setSelectionFromPoint(
       AndroidText hostView, float x, float y, int anchor, long expectedRevision) {
     if (!refreshLayout(hostView)) {
-      return new TextEditContextResult(false, false, snapshot());
+      return new TextEditContextResult(
+          TextEditContextResult.STATUS_GEOMETRY_UNAVAILABLE, false, snapshot());
     }
     int[] screen = new int[2];
-    hostView.getLocationOnScreen(screen);
+    hostView.getLocationInWindow(screen);
     return nativeSetSelectionFromPoint(
-        this.mNativeLayoutSessionPtr, screen[0] + x, screen[1] + y, anchor, expectedRevision);
+        this.mNativeSessionPtr, screen[0] + x, screen[1] + y, anchor, expectedRevision);
   }
 
   void invalidate() {
-    long j = this.mNativeLayoutSessionPtr;
-    if (j != 0) {
-      nativeDestroyLayoutSession(j);
-      this.mNativeLayoutSessionPtr = 0L;
+    long nativePtr = this.mNativeSessionPtr;
+    if (nativePtr != 0) {
+      nativeDestroy(nativePtr);
+      this.mNativeSessionPtr = 0L;
     }
-    this.mRegistryPtr = 0L;
     this.mHostView.clear();
   }
 }

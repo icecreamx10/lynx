@@ -77,12 +77,14 @@ class PaintingContextAndroid : public PaintingCtxPlatformImpl {
   PaintingContextAndroid(JNIEnv* env, jobject impl, jobject text_layout,
                          jlong textra, jint thread_strategy,
                          bool enable_context_free);
-  ~PaintingContextAndroid() override = default;
+  ~PaintingContextAndroid() override;
   virtual void SetUIOperationQueue(
       const std::shared_ptr<shell::UIOperationQueueInterface>& queue) override;
   void SetInstanceId(const int32_t instance_id) override {
     instance_id_ = instance_id;
   };
+  void SetEditingHostRegistry(
+      editing::EditingHostRegistry* registry) override;
   void CreatePaintingNode(int id, const std::string& tag,
                           const fml::RefPtr<PropBundle>& painting_data,
                           bool flatten, bool create_node_async,
@@ -249,6 +251,8 @@ class PaintingContextAndroid : public PaintingCtxPlatformImpl {
                      std::function<void(int32_t code, const pub::Value& data)>>
       invoke_callback_maps_;
   std::shared_ptr<shell::DynamicUIOperationQueue> queue_;
+  editing::EditingHostRegistry* editing_host_registry_{nullptr};
+  uint64_t editing_host_observer_id_{0};
   bool enable_vsync_aligned_flush_ = false;
   jint thread_strategy_;
   bool enable_context_free_;

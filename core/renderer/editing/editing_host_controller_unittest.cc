@@ -153,5 +153,77 @@ TEST(EditingHostControllerTest, MissingGeometryRequestsHostMeasurement) {
   EXPECT_EQ(delegate.requested_projection_revision, 4u);
 }
 
+TEST(EditingHostControllerTest, SelectionRectsRequestMissingCoverage) {
+  EditingHostController controller = Controller(u"abcdef");
+  EditingProjection projection;
+  projection.AppendText(20, u"abcdef", 10);
+  controller.SetProjection(std::move(projection), 4);
+  TestPlatformDelegate delegate;
+  controller.SetDelegate(&delegate);
+  controller.Attach();
+  controller.Activate();
+
+  EditingGeometrySnapshot geometry;
+  geometry.projection_revision = 4;
+  geometry.projection_length = 6;
+  geometry.coverage = TextRange(0, 3);
+  geometry.units = {
+      {0, 10, 20, 0, 1, {0, 0, 10, 10}},
+      {1, 10, 20, 1, 2, {10, 0, 10, 10}},
+      {2, 10, 20, 2, 3, {20, 0, 10, 10}},
+  };
+  ASSERT_EQ(controller.UpdateGeometry(std::move(geometry)),
+            EditingOperationStatus::kAccepted);
+
+  EditingSelectionRectsResult result =
+      controller.QuerySelectionRects(TextRange(1, 5), 0);
+  EXPECT_EQ(result.status, EditingOperationStatus::kGeometryUnavailable);
+  EXPECT_TRUE(result.rects.empty());
+  ASSERT_FALSE(delegate.requested_ranges.empty());
+  EXPECT_EQ(delegate.requested_ranges.back(), TextRange(1, 5));
+}
+
+TEST(EditingHostControllerTest, CollapsedSelectionReturnsCaretRect) {
+  EditingHostController controller = Controller(u"a");
+  EditingProjection projection;
+  projection.AppendText(20, u"a", 10);
+  controller.SetProjection(std::move(projection), 4);
+  controller.Attach();
+  controller.Activate();
+  EditingGeometrySnapshot geometry;
+  geometry.projection_revision = 4;
+  geometry.projection_length = 1;
+  geometry.coverage = TextRange(0, 1);
+  geometry.units = {{0, 10, 20, 0, 1, {5, 6, 8, 10}}};
+  ASSERT_EQ(controller.UpdateGeometry(std::move(geometry)),
+            EditingOperationStatus::kAccepted);
+
+  auto result = controller.QuerySelectionRects(TextRange(1), 0);
+  ASSERT_EQ(result.status, EditingOperationStatus::kAccepted);
+  ASSERT_EQ(result.rects.size(), 1u);
+  EXPECT_EQ(result.rects[0].x, 13);
+  EXPECT_EQ(result.rects[0].width, 0);
+}
+
+TEST(EditingHostControllerTest, EmptyDocumentUsesControlBoundsForCaret) {
+  EditingHostController controller = Controller(u"");
+  controller.SetProjection(EditingProjection(), 4);
+  controller.Attach();
+  controller.Activate();
+  EditingGeometrySnapshot geometry;
+  geometry.projection_revision = 4;
+  geometry.coverage = TextRange(0);
+  geometry.control_bounds = {5, 6, 80, 18};
+  ASSERT_EQ(controller.UpdateGeometry(std::move(geometry)),
+            EditingOperationStatus::kAccepted);
+
+  auto result = controller.QuerySelectionRects(TextRange(0), 0);
+  ASSERT_EQ(result.status, EditingOperationStatus::kAccepted);
+  ASSERT_EQ(result.rects.size(), 1u);
+  EXPECT_EQ(result.rects[0].x, 5);
+  EXPECT_EQ(result.rects[0].height, 18);
+  EXPECT_EQ(result.rects[0].width, 0);
+}
+
 }  // namespace
 }  // namespace lynx::editing

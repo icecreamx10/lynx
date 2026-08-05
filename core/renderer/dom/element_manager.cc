@@ -39,6 +39,7 @@
 #include "core/renderer/dom/fiber/wrapper_element.h"
 #include "core/renderer/dom/fragment/fragment.h"
 #include "core/renderer/dom/vdom/radon/radon_list_base.h"
+#include "core/renderer/editing/editing_host_registry.h"
 #include "core/renderer/events/touch_event_handler.h"
 #include "core/renderer/lynx_env_config.h"
 #include "core/renderer/trace/renderer_trace_event_def.h"
@@ -159,6 +160,8 @@ ElementManager::ElementManager(
     std::unique_ptr<lynx::tasm::LayoutCtxPlatformImpl> platform_layout_context)
     : node_manager_(new NodeManager),
       component_manager_(new ComponentManager),
+      editing_host_registry_(
+          std::make_unique<editing::EditingHostRegistry>()),
       catalyzer_(
           std::make_unique<Catalyzer>(std::make_unique<PaintingContext>(
                                           std::move(platform_painting_context)),
@@ -173,6 +176,7 @@ ElementManager::ElementManager(
       platform_computed_css_(std::make_unique<starlight::ComputedCSSStyle>(
           lynx_env_config.LayoutsUnitPerPx(),
           lynx_env_config.PhysicalPixelsPerLayoutUnit())) {
+  painting_context()->SetEditingHostRegistry(editing_host_registry_.get());
   dom_tree_enabled_ = lynx::tasm::LynxEnv::GetInstance().IsDomTreeEnabled(
       page_options.GetDebuggable());
   platform_computed_css_->SetCSSParserConfigs(GetCSSParserConfigs());

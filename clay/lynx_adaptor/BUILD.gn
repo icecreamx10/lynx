@@ -38,6 +38,8 @@ source_set("lynx_adaptor") {
     "platform_node_tag_resolver.h",
     "prop_bundle_impl.cc",
     "prop_bundle_impl.h",
+    "text_edit_context_session_clay.cc",
+    "text_edit_context_session_clay.h",
     "ui_delegate_clay.cc",
     "ui_delegate_clay.h",
     "value_converter.cc",
@@ -55,6 +57,7 @@ source_set("lynx_adaptor") {
   ]
 
   public_deps = [
+    "../../core/renderer/editing:editing",
     "../fml:fml",
     "../ui:ui",
   ]

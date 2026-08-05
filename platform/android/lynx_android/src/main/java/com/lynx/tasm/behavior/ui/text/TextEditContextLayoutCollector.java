@@ -40,24 +40,41 @@ final class TextEditContextLayoutCollector {
       return null;
     }
     int segmentCount = projection.segmentCount();
-    int unitCount = segmentCount == 0 ? 0 : projection.ends[segmentCount - 1];
+    int coverageFirstSegment = -1;
+    int coverageLastSegment = -1;
+    for (int index = 0; index < segmentCount; index++) {
+      if (canMeasureSegment(owner, projection, index)) {
+        if (coverageFirstSegment < 0) {
+          coverageFirstSegment = index;
+        }
+        coverageLastSegment = index;
+      } else if (coverageFirstSegment >= 0) {
+        break;
+      }
+    }
+    int coverageStart = coverageFirstSegment < 0 ? 0 : projection.starts[coverageFirstSegment];
+    int coverageEnd = coverageLastSegment < 0 ? 0 : projection.ends[coverageLastSegment];
+    int unitCount = coverageEnd - coverageStart;
     int[] hostScreen = new int[2];
-    hostView.getLocationOnScreen(hostScreen);
-    TextEditContextLayoutData result = new TextEditContextLayoutData(projection.revision, unitCount,
+    hostView.getLocationInWindow(hostScreen);
+    TextEditContextLayoutData result = new TextEditContextLayoutData(projection.stateRevision,
+        projection.projectionRevision, projection.length, coverageStart, coverageEnd, unitCount,
         new float[] {hostScreen[0], hostScreen[1], hostView.getWidth(), hostView.getHeight()});
     int[] ownerCursors = new int[segmentCount];
     long[] cursorOwnerIds = new long[segmentCount];
     int cursorCount = 0;
 
-    for (int segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+    for (int segmentIndex = Math.max(0, coverageFirstSegment); segmentIndex <= coverageLastSegment;
+         segmentIndex++) {
       int start = projection.starts[segmentIndex];
       int end = projection.ends[segmentIndex];
       int kind = projection.kinds[segmentIndex];
-      if (start < 0 || end < start || end > unitCount) {
+      if (start < coverageStart || end < start || end > coverageEnd) {
         return null;
       }
       if (kind != 0) {
-        if (!populateAtomicUnit(result, projection, owner, segmentIndex, start, end, kind)) {
+        if (!populateAtomicUnit(result, projection, owner, segmentIndex, start - coverageStart,
+                end - coverageStart, start, kind)) {
           return null;
         }
         continue;
@@ -88,8 +105,9 @@ final class TextEditContextLayoutCollector {
       }
       ownerCursors[cursorIndex] = rawStart + needle.length();
       for (int offset = 0; offset < needle.length(); offset++) {
-        if (!populateTextUnit(result, start + offset, projection.segmentIds[segmentIndex], ownerId,
-                rawStart + offset, textOwner.layout, textOwner.originX, textOwner.originY)) {
+        if (!populateTextUnit(result, start + offset - coverageStart, start + offset,
+                projection.segmentIds[segmentIndex], ownerId, rawStart + offset, textOwner.layout,
+                textOwner.originX, textOwner.originY)) {
           return null;
         }
       }
@@ -97,14 +115,23 @@ final class TextEditContextLayoutCollector {
     return result;
   }
 
+  private static boolean canMeasureSegment(
+      LynxUIOwner owner, TextEditContextLayoutSnapshot projection, int segmentIndex) {
+    if (projection.kinds[segmentIndex] == TextEditContextLayoutSnapshot.KIND_TEXT) {
+      return findTextOwner(owner, projection.ownerIds[segmentIndex]) != null;
+    }
+    return owner.findLynxUIBySign((int) projection.segmentIds[segmentIndex]) != null;
+  }
+
   private static boolean populateAtomicUnit(TextEditContextLayoutData result,
       TextEditContextLayoutSnapshot projection, LynxUIOwner owner, int segmentIndex, int start,
-      int end, int kind) {
+      int end, int projectionOffset, int kind) {
     LynxBaseUI segmentUI = owner.findLynxUIBySign((int) projection.segmentIds[segmentIndex]);
     if (segmentUI == null || end - start != 1) {
       return false;
     }
     Rect bounds = segmentUI.getRectToWindow();
+    result.projectionOffsets[start] = projectionOffset;
     result.segmentIds[start] = projection.segmentIds[segmentIndex];
     result.ownerIds[start] = INVALID_OWNER_ID;
     result.localStarts[start] = 0;
@@ -166,7 +193,7 @@ final class TextEditContextLayoutCollector {
         return null;
       }
       int[] screen = new int[2];
-      view.getLocationOnScreen(screen);
+      view.getLocationInWindow(screen);
       return new TextOwner(
           layout2, screen[0] + view.getTextDrawOffsetX(), screen[1] + view.getTextDrawOffsetY());
     }
@@ -179,8 +206,9 @@ final class TextEditContextLayoutCollector {
         layout, rect.left + text.getDrawOffsetLeft(), rect.top + text.getDrawOffsetTop());
   }
 
-  static boolean populateTextUnit(TextEditContextLayoutData result, int projectionOffset,
-      long segmentId, long ownerId, int localOffset, Layout layout, float originX, float originY) {
+  static boolean populateTextUnit(TextEditContextLayoutData result, int unitIndex,
+      int projectionOffset, long segmentId, long ownerId, int localOffset, Layout layout,
+      float originX, float originY) {
     float endX;
     float lineLeft;
     CharSequence text = layout.getText();
@@ -208,12 +236,13 @@ final class TextEditContextLayoutCollector {
     float top = originY + layout.getLineTop(line);
     float width = Math.max(1.0f, Math.abs(endX - startX));
     float height = Math.max(1, layout.getLineBottom(line) - layout.getLineTop(line));
-    result.segmentIds[projectionOffset] = segmentId;
-    result.ownerIds[projectionOffset] = ownerId;
-    result.localStarts[projectionOffset] = localOffset;
-    result.localEnds[projectionOffset] = localOffset + 1;
-    setBounds(result, projectionOffset, left, top, width, height);
-    result.flags[projectionOffset] = (rightToLeft ? 2 : 0) | 1;
+    result.projectionOffsets[unitIndex] = projectionOffset;
+    result.segmentIds[unitIndex] = segmentId;
+    result.ownerIds[unitIndex] = ownerId;
+    result.localStarts[unitIndex] = localOffset;
+    result.localEnds[unitIndex] = localOffset + 1;
+    setBounds(result, unitIndex, left, top, width, height);
+    result.flags[unitIndex] = (rightToLeft ? 2 : 0) | 1;
     return true;
   }
 

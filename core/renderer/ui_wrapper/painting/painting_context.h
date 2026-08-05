@@ -51,6 +51,10 @@ class PaintingContext {
     platform_impl_->SetConfig(std::move(config));
   }
 
+  void SetEditingHostRegistry(editing::EditingHostRegistry* registry) {
+    platform_impl_->SetEditingHostRegistry(registry);
+  }
+
   inline void GetAbsolutePosition(int id, float* position) {
     platform_impl_->getAbsolutePosition(id, position);
   }

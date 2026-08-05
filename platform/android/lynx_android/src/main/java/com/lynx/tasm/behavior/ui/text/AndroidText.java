@@ -186,14 +186,19 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     if (mTextEditContextSession == session) {
       return;
     }
-    if (mTextEditContextSession != null) {
+    TextEditContextSession previousSession = mTextEditContextSession;
+    if (previousSession != null) {
       if (session == null) {
+        previousSession.deactivate();
         deactivateTextEditContext();
       } else {
-        mTextEditContextSession.deactivate();
+        previousSession.deactivate();
       }
     }
     mTextEditContextSession = session;
+    if (previousSession instanceof TextEditContextSessionBridge) {
+      ((TextEditContextSessionBridge) previousSession).invalidate();
+    }
     mEditContextSelectionRects.clear();
     mEditContextTouchAnchor = -1;
     setFocusableInTouchMode(session != null);
@@ -206,6 +211,10 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     if (manager != null) {
       manager.restartInput(this);
     }
+  }
+
+  boolean isTextEditContextSession(TextEditContextSession session) {
+    return mTextEditContextSession == session;
   }
 
   void activateTextEditContext() {
@@ -746,7 +755,7 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
       rects = new float[0];
     }
     int[] screen = new int[2];
-    getLocationOnScreen(screen);
+    getLocationInWindow(screen);
     mEditContextSelectionRects.clear();
     for (int index = 0; index + 3 < rects.length; index += 4) {
       mEditContextSelectionRects.add(new RectF(rects[index] - screen[0],
@@ -1121,6 +1130,7 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
   @Keep
   @Override
   public void onDetachedFromWindow() {
+    setTextEditContextSession(null);
     super.onDetachedFromWindow();
     dispatchDetachImageSpan();
   }

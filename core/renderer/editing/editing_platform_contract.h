@@ -76,6 +76,11 @@ struct EditingPlatformResult {
   bool accepted() const { return status == EditingOperationStatus::kAccepted; }
 };
 
+struct EditingSelectionRectsResult {
+  EditingOperationStatus status{EditingOperationStatus::kGeometryUnavailable};
+  std::vector<EditContextRect> rects;
+};
+
 struct EditingLayoutPoint {
   float x{0};
   float y{0};
@@ -141,6 +146,8 @@ class EditingPlatformSession {
  public:
   virtual ~EditingPlatformSession() = default;
 
+  virtual void Attach() = 0;
+  virtual void Detach() = 0;
   virtual void SetDelegate(EditingPlatformDelegate* delegate) = 0;
   virtual bool Activate() = 0;
   virtual void Deactivate() = 0;
@@ -161,8 +168,15 @@ class EditingPlatformSession {
   virtual EditingPlatformResult SetSelectionFromPoint(
       EditingLayoutPoint point, std::optional<size_t> anchor,
       uint64_t expected_revision) = 0;
-  virtual std::vector<EditContextRect> SelectionRects(
-      TextRange selection, uint64_t expected_revision) const = 0;
+  virtual EditingSelectionRectsResult QuerySelectionRects(
+      TextRange selection, uint64_t expected_revision) = 0;
+
+  // Convenience for native APIs that express unavailable geometry as an
+  // empty list. QuerySelectionRects() remains the authoritative operation.
+  std::vector<EditContextRect> SelectionRects(TextRange selection,
+                                              uint64_t expected_revision) {
+    return QuerySelectionRects(selection, expected_revision).rects;
+  }
 };
 
 EditingOperationStatus ValidateTransaction(

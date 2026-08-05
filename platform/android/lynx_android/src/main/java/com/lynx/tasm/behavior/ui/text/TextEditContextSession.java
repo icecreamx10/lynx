@@ -25,7 +25,7 @@ interface TextEditContextSession {
 
   default TextEditContextResult setSelectionFromPoint(
       AndroidText hostView, float x, float y, int anchor, long expectedRevision) {
-    return new TextEditContextResult(false, false, snapshot());
+    return new TextEditContextResult(TextEditContextResult.STATUS_INACTIVE, false, snapshot());
   }
 
   TextEditContextSnapshot snapshot();

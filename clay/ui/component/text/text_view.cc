@@ -362,6 +362,10 @@ TextRange TextView::SelectWord(size_t pos) {
 
 void TextView::PerformBeginSelection(FloatPoint point) {
 #ifndef ENABLE_CLAY_LITE
+  if (edit_context_hit_test_callback_) {
+    edit_context_hit_test_callback_(point, false);
+    return;
+  }
   point -= BoundsRelativeTo(nullptr).location();
   selection_start_pos_ =
       GetRenderText()
@@ -377,6 +381,10 @@ void TextView::PerformBeginSelection(FloatPoint point) {
 void TextView::PerformMoveSelection(FloatPoint point,
                                     SelectionHandleView* handle_bar) {
 #ifndef ENABLE_CLAY_LITE
+  if (edit_context_hit_test_callback_) {
+    edit_context_hit_test_callback_(point, true);
+    return;
+  }
   point -= BoundsRelativeTo(nullptr).location();
   selection_end_pos_ = GetRenderText()
                            ->GetPainter()
@@ -396,6 +404,10 @@ void TextView::PerformCancelSelection() {
 }
 
 void TextView::OnSelectionChanged(int selection_start, int selection_end) {
+  if (edit_context_selection_changed_callback_) {
+    edit_context_selection_changed_callback_(selection_start, selection_end);
+    return;
+  }
   std::string direction;
   if (selection_start > selection_end) {
     direction = "backward";

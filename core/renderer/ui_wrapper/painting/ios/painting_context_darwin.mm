@@ -12,6 +12,8 @@
 #include "core/public/box_model.h"
 #include "core/renderer/css/css_style_utils.h"
 #include "core/renderer/dom/ios/lepus_value_converter.h"
+#include "core/renderer/editing/editing_host_controller.h"
+#include "core/renderer/editing/editing_host_registry.h"
 #include "core/renderer/ui_wrapper/common/ios/platform_extra_bundle_darwin.h"
 #include "core/renderer/ui_wrapper/common/ios/prop_bundle_darwin.h"
 #include "core/renderer/ui_wrapper/layout/ios/text_layout_darwin.h"
@@ -40,6 +42,7 @@
 #import <Lynx/LynxTemplateBundle+Converter.h>
 #import <Lynx/LynxTemplateData+Converter.h>
 #import <Lynx/LynxTemplateRender+Internal.h>
+#import <Lynx/LynxTextView.h>
 #import <Lynx/LynxTouchHandler+Internal.h>
 #import <Lynx/LynxUI+Internal.h>
 #import <Lynx/LynxUI+Private.h>
@@ -58,6 +61,14 @@
 #include "third_party/rapidjson/stringbuffer.h"
 #include "third_party/rapidjson/writer.h"
 #endif
+
+@interface LynxTextView (EditContextPaintingBridge)
+- (void)attachEditContextSession:
+    (std::shared_ptr<lynx::editing::EditingPlatformSession>)session;
+- (BOOL)activateEditContext;
+- (void)deactivateEditContext;
+- (void)detachEditContext;
+@end
 
 namespace lynx {
 namespace tasm {
@@ -316,7 +327,58 @@ PaintingContextDarwin::PaintingContextDarwin(LynxUIOwner* owner, bool enable_cre
   }
 }
 
-PaintingContextDarwin::~PaintingContextDarwin() {}
+PaintingContextDarwin::~PaintingContextDarwin() { SetEditingHostRegistry(nullptr); }
+
+void PaintingContextDarwin::SetEditingHostRegistry(editing::EditingHostRegistry* registry) {
+  if (editing_host_registry_ == registry) {
+    return;
+  }
+  if (editing_host_registry_ && editing_host_observer_id_ != 0) {
+    editing_host_registry_->RemoveLifecycleObserver(editing_host_observer_id_);
+  }
+  editing_host_registry_ = registry;
+  editing_host_observer_id_ = 0;
+  if (!registry) {
+    return;
+  }
+
+  auto handle_lifecycle = [this, registry](int64_t host_id,
+                                           editing::EditingHostLifecycleEvent event) {
+    std::shared_ptr<editing::EditingPlatformSession> session;
+    if (event == editing::EditingHostLifecycleEvent::kAttached) {
+      session = registry->Lookup(host_id);
+    }
+    Enqueue([owner = uiOwner_, host_id, event, session = std::move(session)]() mutable {
+      LynxUI* ui = [owner findUIBySign:static_cast<int>(host_id)];
+      UIView* view = ui.view;
+      if (![view isKindOfClass:[LynxTextView class]]) {
+        return;
+      }
+      LynxTextView* text_view = (LynxTextView*)view;
+      switch (event) {
+        case editing::EditingHostLifecycleEvent::kAttached:
+          [text_view attachEditContextSession:std::move(session)];
+          break;
+        case editing::EditingHostLifecycleEvent::kActivated:
+          [text_view activateEditContext];
+          break;
+        case editing::EditingHostLifecycleEvent::kDeactivated:
+          [text_view deactivateEditContext];
+          break;
+        case editing::EditingHostLifecycleEvent::kDetached:
+          [text_view detachEditContext];
+          break;
+      }
+    });
+  };
+  editing_host_observer_id_ = registry->AddLifecycleObserver(handle_lifecycle);
+  for (int64_t host_id : registry->host_ids()) {
+    handle_lifecycle(host_id, editing::EditingHostLifecycleEvent::kAttached);
+  }
+  if (registry->active_host_id()) {
+    handle_lifecycle(*registry->active_host_id(), editing::EditingHostLifecycleEvent::kActivated);
+  }
+}
 
 void PaintingContextDarwin::CreatePaintingNode(int sign, const std::string& tag,
                                                const fml::RefPtr<PropBundle>& painting_data,

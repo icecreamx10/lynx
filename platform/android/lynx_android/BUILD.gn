@@ -42,6 +42,7 @@ cmake_target("lynx_android") {
 
 group("lynx_android_lib") {
   public_deps = [
+    ":editing_adapter",
     "../../../core/animation:animation",
     "../../../core/animation/basic_animation:basic_animation",
     "../../../core/animation/lynx_basic_animator:lynx_basic_animator",
@@ -118,6 +119,21 @@ group("lynx_android_lib") {
       "//third_party/googletest_custom:gtest_custom",
     ]
   }
+}
+
+lynx_core_source_set("editing_adapter") {
+  sources = [
+    "src/main/cpp/editing/editing_session_android.cc",
+    "src/main/cpp/editing/editing_session_android.h",
+  ]
+  deps = [
+    "../../../base/platform/android:LynxBase",
+    "../../../core/base:base",
+  ]
+  public_deps = [
+    "../../../core/renderer/editing:editing",
+    "src/main/jni:build",
+  ]
 }
 
 group("lynx_jni_files") {

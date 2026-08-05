@@ -24,6 +24,10 @@
 
 namespace lynx {
 
+namespace editing {
+class EditingHostRegistry;
+}  // namespace editing
+
 namespace shell {
 class DynamicUIOperationQueue;
 }  // namespace shell
@@ -116,6 +120,8 @@ class PaintingCtxPlatformImpl {
   virtual void SetUIOperationQueue(
       const std::shared_ptr<shell::UIOperationQueueInterface>& queue){};
   virtual void SetInstanceId(const int32_t instance_id){};
+  virtual void SetEditingHostRegistry(
+      editing::EditingHostRegistry* registry) {}
   virtual void CreatePaintingNode(int id, const std::string& tag,
                                   const fml::RefPtr<PropBundle>& painting_data,
                                   bool flatten, bool create_node_async,

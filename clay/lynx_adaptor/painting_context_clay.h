@@ -19,7 +19,12 @@
 #include "core/public/perf_controller_proxy.h"
 
 namespace lynx {
+namespace editing {
+class EditingHostRegistry;
+}
 namespace tasm {
+
+class TextEditContextSessionClay;
 
 class PaintingContextClayRef : public PaintingCtxPlatformRef {
  public:
@@ -81,6 +86,7 @@ class PaintingContextClay : public PaintingCtxPlatformImpl,
       const std::shared_ptr<shell::LynxRuntimeProxy>& runtime_proxy) {
     runtime_proxy_ = runtime_proxy;
   }
+  void SetEditingHostRegistry(editing::EditingHostRegistry* registry) override;
   void SetInstanceId(const int32_t instance_id) override {
     instance_id_ = instance_id;
   }
@@ -171,6 +177,11 @@ class PaintingContextClay : public PaintingCtxPlatformImpl,
   clay::ViewContext* view_context_ = nullptr;
   std::shared_ptr<shell::LynxEngineProxy> engine_proxy_ = nullptr;
   std::shared_ptr<shell::LynxRuntimeProxy> runtime_proxy_ = nullptr;
+
+  editing::EditingHostRegistry* editing_host_registry_{nullptr};
+  uint64_t editing_host_observer_id_{0};
+  std::unordered_map<int64_t, std::unique_ptr<TextEditContextSessionClay>>
+      edit_context_sessions_;
 
   int32_t instance_id_ = 0;
 

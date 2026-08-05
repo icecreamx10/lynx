@@ -11,15 +11,20 @@ final class TextEditContextLayoutSnapshot {
   final int[] boundaryEdges;
   final int[] ends;
   final int[] kinds;
+  final int length;
   final long[] ownerIds;
-  final long revision;
+  final long projectionRevision;
   final long[] segmentIds;
+  final long stateRevision;
   final int[] starts;
   final String[] texts;
 
-  TextEditContextLayoutSnapshot(long revision, long[] segmentIds, long[] ownerIds, int[] kinds,
-      int[] starts, int[] ends, int[] boundaryEdges, String[] texts) {
-    this.revision = revision;
+  TextEditContextLayoutSnapshot(long stateRevision, long projectionRevision, int length,
+      long[] segmentIds, long[] ownerIds, int[] kinds, int[] starts, int[] ends,
+      int[] boundaryEdges, String[] texts) {
+    this.stateRevision = stateRevision;
+    this.projectionRevision = projectionRevision;
+    this.length = length;
     this.segmentIds = segmentIds;
     this.ownerIds = ownerIds;
     this.kinds = kinds;

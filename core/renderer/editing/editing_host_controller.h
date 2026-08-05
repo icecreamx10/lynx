@@ -25,8 +25,8 @@ class EditingHostController final : public EditingPlatformSession {
  public:
   explicit EditingHostController(EditContextOptions options);
 
-  void Attach();
-  void Detach();
+  void Attach() override;
+  void Detach() override;
   bool attached() const { return attached_; }
 
   void SetProjection(EditingProjection projection,
@@ -65,8 +65,8 @@ class EditingHostController final : public EditingPlatformSession {
   EditingPlatformResult SetSelectionFromPoint(
       EditingLayoutPoint point, std::optional<size_t> anchor,
       uint64_t expected_revision) override;
-  std::vector<EditContextRect> SelectionRects(
-      TextRange selection, uint64_t expected_revision) const override;
+  EditingSelectionRectsResult QuerySelectionRects(
+      TextRange selection, uint64_t expected_revision) override;
 
  private:
   EditingPlatformResult Result(EditingOperationStatus status,

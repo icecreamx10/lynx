@@ -71,9 +71,10 @@ host. `coverage` declares the contiguous logical range represented by `units`.
 
 Partial coverage is explicitly valid. This is required for lazy/virtual lists:
 unmounted items are missing geometry, not missing document content. Hit tests or
-selection rectangles outside coverage return `kGeometryUnavailable` and invoke
-`OnGeometryRequested`; the host may mount/measure the requested range and submit
-a newer snapshot. No adapter may fabricate zero rectangles for unmounted text.
+`QuerySelectionRects()` outside coverage return `kGeometryUnavailable` and
+invoke `OnGeometryRequested` with the logical range; the host may mount/measure
+the requested content and submit a newer snapshot. No adapter may fabricate
+zero rectangles for unmeasured text.
 
 Each covered code unit has at most one ordered layout unit. Atomic descendants
 occupy one U+FFFC unit and block boundaries one U+000A unit. Platform adapters

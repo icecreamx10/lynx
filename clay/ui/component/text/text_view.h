@@ -5,6 +5,7 @@
 #ifndef CLAY_UI_COMPONENT_TEXT_TEXT_VIEW_H_
 #define CLAY_UI_COMPONENT_TEXT_TEXT_VIEW_H_
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -83,6 +84,18 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
   TextRange SelectWord(size_t pos);
 
   void OnSelectionChanged(int selection_start, int selection_end);
+
+  // EditContext keeps editing semantics in the shared C++ controller. These
+  // callbacks let the Clay adapter observe native text selection gestures
+  // without making TextView depend on the editing core.
+  void SetEditContextSelectionChangedCallback(
+      std::function<void(int, int)> callback) {
+    edit_context_selection_changed_callback_ = std::move(callback);
+  }
+  void SetEditContextHitTestCallback(
+      std::function<void(const FloatPoint&, bool)> callback) {
+    edit_context_hit_test_callback_ = std::move(callback);
+  }
 
   void setTextSelection(const LynxModuleValues& args,
                         const LynxUIMethodCallback& callback);
@@ -177,6 +190,9 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
   bool custom_text_selection_ = false;
   bool custom_context_menu_ = false;
   uint32_t hot_key_tag_ = 0;
+
+  std::function<void(int, int)> edit_context_selection_changed_callback_;
+  std::function<void(const FloatPoint&, bool)> edit_context_hit_test_callback_;
 
   fml::WeakPtrFactory<TextView> weak_factory_;
   std::unique_ptr<txt::Paragraph> paragraph_;

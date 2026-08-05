@@ -411,7 +411,11 @@ subspec_target("lynx") {
     "ui/scroll_view/base/LynxBaseScrollView+Vertical.m",
     "ui/scroll_view/base/LynxBaseScrollView.m",
     "ui/text/LynxTextOverflowLayer.m",
+    "ui/text/LynxEditContextInputClient.h",
+    "ui/text/LynxEditContextInputClient.mm",
     "ui/text/LynxTextView.m",
+    "ui/text/LynxTextView+EditContext.h",
+    "ui/text/LynxTextView+EditContext.mm",
     "ui/text/LynxUIText.m",
     "utils/LynxGradientUtils.mm",
     "utils/LynxPropertyDiffMap.m",
@@ -445,6 +449,7 @@ subspec_target("lynx") {
     "LynxContext+Internal.h",
     "LynxUIRenderer.h",
   ]
+  deps = [ "../../../../core/renderer/editing:editing" ]
 }
 
 subspec_target("UnitTests") {

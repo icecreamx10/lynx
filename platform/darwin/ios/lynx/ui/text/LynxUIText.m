@@ -338,6 +338,19 @@ LYNX_PROPS_GROUP_DECLARE(
   [super frameDidChange];
   _isDirty = true;
   [self requestDisplay];
+  [self.view refreshEditContextGeometry];
+}
+
+- (void)willMoveToWindow:(UIWindow *)window {
+  [super willMoveToWindow:window];
+  if (!window) {
+    [self.view deactivateEditContext];
+  }
+}
+
+- (void)detachView {
+  [self.view detachEditContext];
+  [super detachView];
 }
 
 - (LynxUIMeaningfulContentStatus)meaningfulContentStatus {
@@ -425,6 +438,7 @@ LYNX_PROPS_GROUP_DECLARE(
       self.view.accessibilityLabel = _renderer.attrStr.string;
     }
     self.view.textRenderer = _renderer;
+    [self.view refreshEditContextGeometry];
     if (!self.view.selectionChangeEventCallback &&
         [self.eventSet objectForKey:@"selectionchange"]) {
       __weak typeof(self) weakSelf = self;

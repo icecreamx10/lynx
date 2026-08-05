@@ -28,6 +28,7 @@ lynx_core_source_set("dom") {
     "../../services/long_task_timing",
     "../../value_wrapper",
     "../css:css_dom",
+    "../editing",
     "../simple_styling",
     "../trace:renderer_trace",
     "../ui_wrapper",
