@@ -7,8 +7,12 @@ import("../../Lynx.gni")
 
 # worklet_shared_sources
 worklet_shared_sources = [
+  "../../runtime/lepusng/napi/worklet/edit_context_binding_registry.cc",
+  "../../runtime/lepusng/napi/worklet/edit_context_binding_registry.h",
   "../../runtime/lepusng/napi/worklet/napi_frame_callback.cc",
   "../../runtime/lepusng/napi/worklet/napi_frame_callback.h",
+  "../../runtime/lepusng/napi/worklet/napi_edit_context.cc",
+  "../../runtime/lepusng/napi/worklet/napi_edit_context.h",
   "../../runtime/lepusng/napi/worklet/napi_func_callback.cc",
   "../../runtime/lepusng/napi/worklet/napi_func_callback.h",
   "../../runtime/lepusng/napi/worklet/napi_lepus_component.cc",
@@ -44,6 +48,7 @@ lynx_core_source_set("worklet") {
 
   public_deps = [
     "../../../third_party/rapidjson",
+    "../editing:editing",
     "../trace:renderer_trace",
   ]
   if (!enable_unittests) {
@@ -58,7 +63,7 @@ lynx_core_source_set("worklet") {
 
 lynx_core_source_set("worklet_oliver") {
   sources = worklet_shared_sources
-  public_deps = []
+  public_deps = [ "../editing:editing" ]
   if (!enable_unittests) {
     public_deps += [ "../css:css_decoder" ]
   }
@@ -67,6 +72,9 @@ lynx_core_source_set("worklet_oliver") {
 
 unittest_set("worklet_testset") {
   sources = [
+    "test/edit_context_binding_registry_unittest.cc",
+    "test/edit_context_element_lifecycle_unittest.cc",
+    "test/napi_edit_context_unittest.cc",
     "test/worklet_api_unittest.cc",
     "test/worklet_event_unittest.cc",
     "test/worklet_utils_unittest.cc",
@@ -102,4 +110,43 @@ unittest_exec("worklet_unittests_exec") {
     "../dom:renderer_dom",
     "../starlight",
   ]
+}
+
+unittest_exec("napi_edit_context_unittests_exec") {
+  sources = [
+    "../../runtime/lepusng/napi/worklet/napi_edit_context.cc",
+    "test/napi_edit_context_unittest.cc",
+  ]
+  public_configs = [ "../../../third_party/napi:napi_config" ]
+  deps = [
+    "../../../base/src:base_log_headers",
+    "../../../third_party/napi:env",
+    "../../../third_party/napi:quickjs",
+    "../../../third_party/quickjs",
+    "../../runtime/common/napi:napi_binding_quickjs",
+    "../editing:editing",
+  ]
+  if (is_mac) {
+    deps += [ "../../runtime/common/napi:napi_binding_jsc" ]
+  }
+}
+
+unittest_exec("edit_context_binding_registry_unittests_exec") {
+  sources = [
+    "../../runtime/lepusng/napi/worklet/edit_context_binding_registry.cc",
+    "../../runtime/lepusng/napi/worklet/napi_edit_context.cc",
+    "test/edit_context_binding_registry_unittest.cc",
+  ]
+  public_configs = [ "../../../third_party/napi:napi_config" ]
+  deps = [
+    "../../../base/src:base_log_headers",
+    "../../../third_party/napi:env",
+    "../../../third_party/napi:quickjs",
+    "../../../third_party/quickjs",
+    "../../runtime/common/napi:napi_binding_quickjs",
+    "../editing:editing",
+  ]
+  if (is_mac) {
+    deps += [ "../../runtime/common/napi:napi_binding_jsc" ]
+  }
 }

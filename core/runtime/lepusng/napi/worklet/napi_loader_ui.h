@@ -5,6 +5,7 @@
 #ifndef CORE_RUNTIME_LEPUSNG_NAPI_WORKLET_NAPI_LOADER_UI_H_
 #define CORE_RUNTIME_LEPUSNG_NAPI_WORKLET_NAPI_LOADER_UI_H_
 
+#include <memory>
 #include <unordered_map>
 
 #include "core/runtime/common/napi/napi_environment.h"
@@ -18,25 +19,33 @@
 namespace lynx {
 namespace worklet {
 
+class EditContextBindingRegistry;
 class LepusLynx;
 
 class NapiLoaderUI : public runtime::js::NapiEnvironment::Delegate {
  public:
   NapiLoaderUI(runtime::MTSRuntime* context);
+  ~NapiLoaderUI() override;
 
   void OnAttach(Napi::Env env) override;
   void OnDetach(Napi::Env env) override;
   lynx::worklet::LepusLynx* lepus_lynx() { return lynx_; }
+  EditContextBindingRegistry* edit_context_binding_registry() {
+    return edit_context_binding_registry_.get();
+  }
   void InvokeLepusBridge(const int32_t callback_id, const lepus::Value& data);
 
   static lepus::QuickContext* GetQuickContextFromNapiEnv(Napi::Env env);
+  static NapiLoaderUI* GetLoaderFromNapiEnv(Napi::Env env);
 
  private:
   static std::unordered_map<napi_env, lepus::QuickContext*>&
   NapiEnvToContextMap();
+  static std::unordered_map<napi_env, NapiLoaderUI*>& NapiEnvToLoaderMap();
   void SetNapiEnvToLEPUSContext(Napi::Env env);
 
   lynx::worklet::LepusLynx* lynx_ = nullptr;
+  std::unique_ptr<EditContextBindingRegistry> edit_context_binding_registry_;
   runtime::MTSRuntime* context_ = nullptr;
 };
 

@@ -6,7 +6,12 @@
 
 #include <memory>
 
+#include "core/renderer/dom/element_manager.h"
+#include "core/renderer/page_proxy.h"
+#include "core/renderer/template_assembler.h"
 #include "core/renderer/worklet/lepus_lynx.h"
+#include "core/runtime/lepusng/napi/worklet/edit_context_binding_registry.h"
+#include "core/runtime/lepusng/napi/worklet/napi_edit_context.h"
 #include "core/runtime/lepusng/napi/worklet/napi_lepus_lynx.h"
 
 #ifdef USE_PRIMJS_NAPI
@@ -18,15 +23,26 @@ namespace worklet {
 
 NapiLoaderUI::NapiLoaderUI(runtime::MTSRuntime* context) : context_(context) {}
 
+NapiLoaderUI::~NapiLoaderUI() = default;
+
 void NapiLoaderUI::OnAttach(Napi::Env env) {
   SetNapiEnvToLEPUSContext(env);
+  NapiEnvToLoaderMap()[static_cast<napi_env>(env)] = this;
+
+  auto* tasm = static_cast<tasm::TemplateAssembler*>(context_->GetDelegate());
+  auto* host_registry =
+      tasm && tasm->page_proxy() && tasm->page_proxy()->element_manager()
+          ? tasm->page_proxy()->element_manager()->editing_host_registry()
+          : nullptr;
+  edit_context_binding_registry_ =
+      std::make_unique<EditContextBindingRegistry>(env, host_registry);
 
   // Set Lynx To Napi Env
-  lynx_ = LepusLynx::Create(
-      env, context_->name(),
-      static_cast<tasm::TemplateAssembler*>(context_->GetDelegate()));
+  lynx_ = LepusLynx::Create(env, context_->name(), tasm);
   constexpr const static char* kGlobalLynxName = "lepusLynx";
   Napi::HandleScope handle_scope(env);
+  Napi::Object global = env.Global();
+  NapiEditContext::Install(env, global);
   env.Global()[kGlobalLynxName] =
       NapiLepusLynx::Wrap(std::unique_ptr<LepusLynx>(lynx_), env);
 }
@@ -36,6 +52,8 @@ void NapiLoaderUI::OnDetach(Napi::Env env) {
   if (!use_env) {
     return;
   }
+  edit_context_binding_registry_.reset();
+  NapiEnvToLoaderMap().erase(use_env);
   auto& map = NapiEnvToContextMap();
   auto iter = map.find(use_env);
   if (iter == map.end()) {
@@ -62,9 +80,21 @@ lepus::QuickContext* NapiLoaderUI::GetQuickContextFromNapiEnv(Napi::Env env) {
   return iter->second;
 }
 
+NapiLoaderUI* NapiLoaderUI::GetLoaderFromNapiEnv(Napi::Env env) {
+  auto& loader_map = NapiLoaderUI::NapiEnvToLoaderMap();
+  auto iter = loader_map.find(static_cast<napi_env>(env));
+  return iter == loader_map.end() ? nullptr : iter->second;
+}
+
 std::unordered_map<napi_env, lepus::QuickContext*>&
 NapiLoaderUI::NapiEnvToContextMap() {
   static thread_local std::unordered_map<napi_env, lepus::QuickContext*> map;
+  return map;
+}
+
+std::unordered_map<napi_env, NapiLoaderUI*>&
+NapiLoaderUI::NapiEnvToLoaderMap() {
+  static thread_local std::unordered_map<napi_env, NapiLoaderUI*> map;
   return map;
 }
 

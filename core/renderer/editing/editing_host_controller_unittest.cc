@@ -114,6 +114,31 @@ TEST(EditingHostControllerTest, DeleteBackwardDoesNotSplitSurrogatePair) {
   EXPECT_EQ(result.snapshot.selection, TextRange(1));
 }
 
+TEST(EditingHostControllerTest, InputReplacesBackwardSelection) {
+  EditingHostController controller = Controller(u"abcde");
+  controller.Attach();
+  controller.Activate();
+  ASSERT_TRUE(controller.UpdateSelection(4, 1));
+
+  EditingPlatformResult result = controller.PerformInput("insertText", u"X", 1);
+  EXPECT_TRUE(result.accepted());
+  EXPECT_EQ(result.snapshot.text, u"aXe");
+  EXPECT_EQ(result.snapshot.selection, TextRange(2));
+}
+
+TEST(EditingHostControllerTest, FrontendSelectionUpdateNotifiesWorklet) {
+  EditingHostController controller = Controller(u"abcde");
+  std::vector<TextRange> selections;
+  controller.SetSelectionChangeCallback(
+      [&](const TextRange& selection) { selections.push_back(selection); });
+
+  EXPECT_TRUE(controller.UpdateSelection(4, 1));
+  ASSERT_EQ(selections.size(), 1u);
+  EXPECT_EQ(selections[0], TextRange(4, 1));
+  EXPECT_TRUE(controller.UpdateSelection(4, 1));
+  EXPECT_EQ(selections.size(), 1u);
+}
+
 TEST(EditingHostControllerTest, GeometryRequiresBothRevisions) {
   EditingHostController controller = Controller(u"abc");
   EditingProjection projection;

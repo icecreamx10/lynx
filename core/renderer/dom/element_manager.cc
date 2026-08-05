@@ -160,8 +160,7 @@ ElementManager::ElementManager(
     std::unique_ptr<lynx::tasm::LayoutCtxPlatformImpl> platform_layout_context)
     : node_manager_(new NodeManager),
       component_manager_(new ComponentManager),
-      editing_host_registry_(
-          std::make_unique<editing::EditingHostRegistry>()),
+      editing_host_registry_(std::make_unique<editing::EditingHostRegistry>()),
       catalyzer_(
           std::make_unique<Catalyzer>(std::make_unique<PaintingContext>(
                                           std::move(platform_painting_context)),
@@ -1190,6 +1189,9 @@ void ElementManager::RequestNextFrame(Element *element) {
 }
 
 void ElementManager::NotifyElementDestroy(Element *element) {
+  if (element && editing_host_registry_) {
+    editing_host_registry_->Detach(element->impl_id());
+  }
   animation_element_set_.erase(element);
   paused_animation_element_set_.erase(element);
 }

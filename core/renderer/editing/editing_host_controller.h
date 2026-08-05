@@ -19,6 +19,7 @@ struct EditingInputEvent {
   std::string input_type;
   std::u16string data;
   TextRange target_range;
+  bool is_composing{false};
 };
 
 class EditingHostController final : public EditingPlatformSession {
@@ -45,6 +46,8 @@ class EditingHostController final : public EditingPlatformSession {
 
   EditContextModel& edit_context() { return edit_context_; }
   const EditContextModel& edit_context() const { return edit_context_; }
+  bool UpdateText(size_t start, size_t end, const std::u16string& text);
+  bool UpdateSelection(size_t start, size_t end);
 
   // EditingPlatformSession
   void SetDelegate(EditingPlatformDelegate* delegate) override;

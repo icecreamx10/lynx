@@ -67,7 +67,9 @@ bool EditContextModel::ApplyNativeTextUpdate(
   const bool started_composition = !composition_ && composition;
   const bool ended_composition = composition_ && !composition;
   if (started_composition) {
-    Dispatch({EditContextEventType::kCompositionStart});
+    EditContextEvent event;
+    event.type = EditContextEventType::kCompositionStart;
+    Dispatch(std::move(event));
   }
   state_.text.replace(update_range.start(), update_range.length(), text);
   state_.selection = selection;
@@ -76,7 +78,9 @@ bool EditContextModel::ApplyNativeTextUpdate(
   Dispatch({EditContextEventType::kTextUpdate, update_range, text, selection,
             composition});
   if (ended_composition) {
-    Dispatch({EditContextEventType::kCompositionEnd});
+    EditContextEvent event;
+    event.type = EditContextEventType::kCompositionEnd;
+    Dispatch(std::move(event));
   }
   return true;
 }
@@ -90,13 +94,17 @@ bool EditContextModel::ApplyNativeSelection(
   const bool started_composition = !composition_ && composition;
   const bool ended_composition = composition_ && !composition;
   if (started_composition) {
-    Dispatch({EditContextEventType::kCompositionStart});
+    EditContextEvent event;
+    event.type = EditContextEventType::kCompositionStart;
+    Dispatch(std::move(event));
   }
   state_.selection = selection;
   composition_ = composition;
   CommitState();
   if (ended_composition) {
-    Dispatch({EditContextEventType::kCompositionEnd});
+    EditContextEvent event;
+    event.type = EditContextEventType::kCompositionEnd;
+    Dispatch(std::move(event));
   }
   return true;
 }

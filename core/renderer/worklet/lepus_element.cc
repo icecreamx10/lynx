@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/include/debug/lynx_assert.h"
+#include "base/include/string/string_utils.h"
 #include "base/include/value/base_value.h"
 #include "base/trace/native/trace_event.h"
 #include "core/build/gen/lynx_sub_error_code.h"
@@ -17,6 +18,7 @@
 #include "core/renderer/css/css_property.h"
 #include "core/renderer/dom/element.h"
 #include "core/renderer/dom/vdom/radon/radon_page.h"
+#include "core/renderer/editing/editing_host_registry.h"
 #include "core/renderer/template_entry.h"
 #include "core/renderer/worklet/base/worklet_utils.h"
 #include "core/renderer/worklet/lepus_component.h"
@@ -25,6 +27,8 @@
 #include "core/runtime/common/napi/napi_environment.h"
 #include "core/runtime/lepus/lepus_error_helper.h"
 #include "core/runtime/lepusng/jsvalue_helper.h"
+#include "core/runtime/lepusng/napi/worklet/edit_context_binding_registry.h"
+#include "core/runtime/lepusng/napi/worklet/napi_edit_context.h"
 #include "core/runtime/lepusng/napi/worklet/napi_lepus_component.h"
 #include "core/runtime/lepusng/napi/worklet/napi_lepus_element.h"
 #include "core/runtime/lepusng/napi/worklet/napi_lepus_gesture.h"
@@ -47,6 +51,7 @@ namespace worklet {
 // magic numbers of event method
 constexpr int kStopPropagationBit = 0x1;
 constexpr int kStopImmediatePropagationBit = 0x2;
+constexpr int kPreventDefaultBit = 0x4;
 
 const uint64_t kLepusEventProtoID =
     reinterpret_cast<uint64_t>(&kLepusEventProtoID);
@@ -63,6 +68,10 @@ static LEPUSValue EventAPI_method(LEPUSContext* ctx, LEPUSValueConst this_val,
   int* result =
       reinterpret_cast<int*>(LEPUS_GetOpaque(this_val, LEPUS_CLASS_OBJECT));
   *result |= magic;
+  if (magic == kPreventDefaultBit) {
+    LEPUS_SetPropertyStr(ctx, this_val, "defaultPrevented",
+                         LEPUS_NewBool(ctx, true));
+  }
   return LEPUS_UNDEFINED;
 }
 
@@ -84,6 +93,7 @@ static void SetEventPrototype(Napi::Env& env, LEPUSContext* ctx,
   AddEventAPI(ctx, js_value, "stopPropagation", kStopPropagationBit);
   AddEventAPI(ctx, js_value, "stopImmediatePropagation",
               kStopImmediatePropagationBit);
+  AddEventAPI(ctx, js_value, "preventDefault", kPreventDefaultBit);
 }
 
 static void WrapEventTarget(
@@ -604,6 +614,107 @@ Napi::Object LepusElement::GetDataset() {
   return res;
 }
 
+bool LepusElement::DispatchEditingEvent(const std::string& name,
+                                        const lepus::Value& detail,
+                                        bool cancelable) {
+  auto* element = GetElement();
+  auto handler = task_handler_.lock();
+  if (!element || !handler) {
+    return true;
+  }
+  const auto& events = element->lepus_event_map();
+  auto found = events.find(base::String(name));
+  if (found == events.end() || !found->second || found->second->is_js_event()) {
+    return true;
+  }
+
+  auto params = lepus::Dictionary::Create();
+  params->SetValue("type", name);
+  params->SetValue("detail", detail);
+  params->SetValue("target", element->GetEventTargetInfo());
+  params->SetValue("currentTarget", element->GetEventTargetInfo());
+  params->SetValue("cancelable", cancelable);
+  params->SetValue("defaultPrevented", false);
+
+  auto result = FireElementWorklet(
+      element->ParentComponentIdString(), element->ParentComponentEntryName(),
+      tasm_, found->second->lepus_function(), found->second->lepus_script(),
+      lepus::Value(std::move(params)), handler, element_id_,
+      tasm::EventType::kCustom);
+  return (static_cast<int>(result) & kPreventDefaultBit) == 0;
+}
+
+Napi::Value LepusElement::GetEditContext() {
+  auto env = NapiEnv();
+  auto* loader = NapiLoaderUI::GetLoaderFromNapiEnv(env);
+  auto* registry = loader ? loader->edit_context_binding_registry() : nullptr;
+  return registry ? registry->GetObject(env, element_id_) : env.Null();
+}
+
+void LepusElement::SetEditContext(const Napi::Value& value,
+                                  const Napi::Object& wrapper) {
+  auto env = NapiEnv();
+  auto* loader = NapiLoaderUI::GetLoaderFromNapiEnv(env);
+  auto* registry = loader ? loader->edit_context_binding_registry() : nullptr;
+  auto* element = GetElement();
+  if (!registry || !element || element->IsDetached() ||
+      element->GetTag() != "text") {
+    Napi::TypeError::New(
+        env, "editContext can only be associated with a live <text> element")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+
+  if (value.IsNull()) {
+    registry->Unbind(element_id_);
+    return;
+  }
+
+  auto* context = NapiEditContext::Unwrap(value);
+  if (!context) {
+    Napi::TypeError::New(env, "editContext must be an EditContext or null")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+  if (!context->AssociateElement(element_id_, wrapper)) {
+    Napi::TypeError::New(
+        env, "An EditContext cannot be associated with two elements")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+  if (!registry->Bind(element_id_, context->controller(),
+                      value.As<Napi::Object>())) {
+    context->DetachElement(element_id_);
+    Napi::Error::New(env, "Failed to associate EditContext with <text>")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+
+  context->controller()->SetBeforeInputCallback(
+      [this](const editing::EditingInputEvent& event) {
+        auto detail = lepus::Dictionary::Create();
+        detail->SetValue("inputType", event.input_type);
+        detail->SetValue("data", base::U16StringToU8(event.data));
+        detail->SetValue("isComposing", event.is_composing);
+        detail->SetValue("targetRangeStart",
+                         static_cast<uint64_t>(event.target_range.start()));
+        detail->SetValue("targetRangeEnd",
+                         static_cast<uint64_t>(event.target_range.end()));
+        return DispatchEditingEvent("beforeinput",
+                                    lepus::Value(std::move(detail)), true);
+      });
+  context->controller()->SetSelectionChangeCallback(
+      [this](const editing::TextRange& selection) {
+        auto detail = lepus::Dictionary::Create();
+        detail->SetValue("selectionStart",
+                         static_cast<uint64_t>(selection.base()));
+        detail->SetValue("selectionEnd",
+                         static_cast<uint64_t>(selection.extent()));
+        DispatchEditingEvent("selectionchange", lepus::Value(std::move(detail)),
+                             false);
+      });
+}
+
 Napi::Value LepusElement::ScrollBy(float width, float height) {
   TRACE_EVENT(LYNX_TRACE_CATEGORY, LEPUS_ELEMENT_TRIGGER_SCROLL_BY);
   auto env = NapiEnv();
@@ -786,6 +897,22 @@ void LepusElement::Invoke(const Napi::Object& object) {
     } else {
       invoke_ui_method();
     }
+  }
+}
+
+void LepusElement::Focus() {
+  auto* loader = NapiLoaderUI::GetLoaderFromNapiEnv(NapiEnv());
+  auto* registry = loader ? loader->edit_context_binding_registry() : nullptr;
+  if (registry && registry->host_registry()) {
+    registry->host_registry()->Activate(element_id_);
+  }
+}
+
+void LepusElement::Blur() {
+  auto* loader = NapiLoaderUI::GetLoaderFromNapiEnv(NapiEnv());
+  auto* registry = loader ? loader->edit_context_binding_registry() : nullptr;
+  if (registry && registry->host_registry()) {
+    registry->host_registry()->Deactivate(element_id_);
   }
 }
 }  // namespace worklet

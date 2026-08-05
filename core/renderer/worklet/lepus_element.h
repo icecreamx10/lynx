@@ -65,13 +65,19 @@ class LepusElement : public ImplBase {
   Napi::Object GetComputedStyles(const std::vector<Napi::String>& keys);
   Napi::Object GetAttributes(const std::vector<Napi::String>& keys);
   Napi::Object GetDataset();
+  Napi::Value GetEditContext();
+  void SetEditContext(const Napi::Value& value, const Napi::Object& wrapper);
 
   // Function
   Napi::Value ScrollBy(float width, float height);
   Napi::Value GetBoundingClientRect();
   void Invoke(const Napi::Object& object);
+  void Focus();
+  void Blur();
 
  private:
+  bool DispatchEditingEvent(const std::string& name, const lepus::Value& detail,
+                            bool cancelable);
   static void ReportPendingJobException(lynx::tasm::TemplateAssembler* tasm,
                                         LEPUSContext* ctx, bool is_ur);
 

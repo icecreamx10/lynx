@@ -148,6 +148,17 @@ void NapiLepusElement::Init(std::unique_ptr<LepusElement> impl) {
   impl_->AssociateWithWrapper(this);
 }
 
+Value NapiLepusElement::GetEditContextAttribute(const CallbackInfo& info) {
+  DCHECK(impl_);
+  return impl_->GetEditContext();
+}
+
+void NapiLepusElement::SetEditContextAttribute(const CallbackInfo& info,
+                                                const Value& value) {
+  DCHECK(impl_);
+  impl_->SetEditContext(value, NapiObject());
+}
+
 Value NapiLepusElement::SetAttributesMethod(const CallbackInfo& info) {
   DCHECK(impl_);
 
@@ -269,6 +280,18 @@ Value NapiLepusElement::InvokeMethod(const CallbackInfo& info) {
   return info.Env().Undefined();
 }
 
+Value NapiLepusElement::FocusMethod(const CallbackInfo& info) {
+  DCHECK(impl_);
+  impl_->Focus();
+  return info.Env().Undefined();
+}
+
+Value NapiLepusElement::BlurMethod(const CallbackInfo& info) {
+  DCHECK(impl_);
+  impl_->Blur();
+  return info.Env().Undefined();
+}
+
 // static
 Napi::Class* NapiLepusElement::Class(Napi::Env env) {
   auto* clazz = env.GetInstanceData<Napi::Class>(kLepusElementClassID);
@@ -279,6 +302,9 @@ Napi::Class* NapiLepusElement::Class(Napi::Env env) {
   base::InlineVector<Wrapped::PropertyDescriptor, 8> props;
 
   // Attributes
+  AddAttribute(props, "editContext",
+               &NapiLepusElement::GetEditContextAttribute,
+               &NapiLepusElement::SetEditContextAttribute);
 
   // Methods
   AddInstanceMethod(props, "setAttributes", &NapiLepusElement::SetAttributesMethod);
@@ -289,6 +315,8 @@ Napi::Class* NapiLepusElement::Class(Napi::Env env) {
   AddInstanceMethod(props, "scrollBy", &NapiLepusElement::ScrollByMethod);
   AddInstanceMethod(props, "getBoundingClientRect", &NapiLepusElement::GetBoundingClientRectMethod);
   AddInstanceMethod(props, "invoke", &NapiLepusElement::InvokeMethod);
+  AddInstanceMethod(props, "focus", &NapiLepusElement::FocusMethod);
+  AddInstanceMethod(props, "blur", &NapiLepusElement::BlurMethod);
 
   // Cache the class
   clazz = new Napi::Class(Wrapped::DefineClass(env, "LepusElement", props.size(), props.data<const napi_property_descriptor>()));

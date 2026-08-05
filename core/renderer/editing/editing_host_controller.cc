@@ -101,6 +101,25 @@ EditingProjectionSnapshot EditingHostController::ProjectionSnapshot() const {
           projection_.segments()};
 }
 
+bool EditingHostController::UpdateText(size_t start, size_t end,
+                                       const std::u16string& text) {
+  const TextRange previous_selection = edit_context_.selection();
+  if (!edit_context_.UpdateText(start, end, text)) {
+    return false;
+  }
+  NotifySelectionIfChanged(previous_selection);
+  return true;
+}
+
+bool EditingHostController::UpdateSelection(size_t start, size_t end) {
+  const TextRange previous_selection = edit_context_.selection();
+  if (!edit_context_.UpdateSelection(start, end)) {
+    return false;
+  }
+  NotifySelectionIfChanged(previous_selection);
+  return true;
+}
+
 EditingPlatformResult EditingHostController::ApplyTransaction(
     const NativeTextTransaction& transaction) {
   if (!IsActive()) {
@@ -112,9 +131,12 @@ EditingPlatformResult EditingHostController::ApplyTransaction(
     return Result(validation,
                   validation == EditingOperationStatus::kStaleRevision);
   }
-  EditingInputEvent event{transaction.input_type, transaction.replacement_text,
-                          transaction.replacement_range};
-  if (before_input_callback_ && !before_input_callback_(event)) {
+  EditingInputEvent event{
+      transaction.input_type, transaction.replacement_text,
+      transaction.replacement_range,
+      transaction.composition.has_value() || Snapshot().has_composition};
+  if (transaction.updates_text && before_input_callback_ &&
+      !before_input_callback_(event)) {
     return Result(EditingOperationStatus::kAccepted);
   }
 
@@ -147,6 +169,7 @@ EditingPlatformResult EditingHostController::PerformInput(
   }
   TextRange replacement =
       state.has_composition ? state.composition : state.selection;
+  replacement = TextRange(replacement.start(), replacement.end());
   std::u16string replacement_text;
   if (input_type.rfind("insert", 0) == 0) {
     replacement_text = data;

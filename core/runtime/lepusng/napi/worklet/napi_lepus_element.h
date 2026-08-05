@@ -36,6 +36,8 @@ class NapiLepusElement : public NapiBridge {
   void Init(std::unique_ptr<LepusElement>);
 
   // Attributes
+  Napi::Value GetEditContextAttribute(const Napi::CallbackInfo&);
+  void SetEditContextAttribute(const Napi::CallbackInfo&, const Napi::Value&);
 
   // Methods
   Napi::Value SetAttributesMethod(const Napi::CallbackInfo&);
@@ -46,6 +48,8 @@ class NapiLepusElement : public NapiBridge {
   Napi::Value ScrollByMethod(const Napi::CallbackInfo&);
   Napi::Value GetBoundingClientRectMethod(const Napi::CallbackInfo&);
   Napi::Value InvokeMethod(const Napi::CallbackInfo&);
+  Napi::Value FocusMethod(const Napi::CallbackInfo&);
+  Napi::Value BlurMethod(const Napi::CallbackInfo&);
 
   // Overload Hubs
 

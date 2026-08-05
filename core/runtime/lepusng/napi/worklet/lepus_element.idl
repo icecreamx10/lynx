@@ -1,4 +1,6 @@
 interface LepusElement {
+    attribute object editContext;
+
     void setAttributes(object attributes);
     void setStyles(object styles);
     object getAttributes(sequence<ByteString> keys);
@@ -8,4 +10,6 @@ interface LepusElement {
     object scrollBy(float width, float height);
     object getBoundingClientRect();
     void invoke(object param);
+    void focus();
+    void blur();
 };
