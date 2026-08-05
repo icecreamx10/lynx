@@ -28,6 +28,10 @@ notifications: an adapter must post work instead of calling the session from a
 callback. Platform object destruction must clear the delegate before releasing
 the session.
 
+`ProjectionSnapshot()` is also a value copy. It exposes segment/owner/range
+descriptors only so a host can measure mounted content. It does not authorize a
+platform adapter to rebuild projection rules or mutate the projection.
+
 ## Lifecycle
 
 The required sequence is:

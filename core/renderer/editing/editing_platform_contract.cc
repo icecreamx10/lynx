@@ -5,6 +5,7 @@
 #include "core/renderer/editing/editing_platform_contract.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace lynx::editing {
 
@@ -21,7 +22,11 @@ bool EditingGeometrySnapshot::Covers(const TextRange& range) const {
 }
 
 bool EditingGeometrySnapshot::IsStructurallyValid() const {
-  if (!IsRangeValid(coverage, projection_length)) {
+  if (coverage.reversed() || !IsRangeValid(coverage, projection_length) ||
+      !std::isfinite(control_bounds.x) || !std::isfinite(control_bounds.y) ||
+      !std::isfinite(control_bounds.width) ||
+      !std::isfinite(control_bounds.height) || control_bounds.width < 0 ||
+      control_bounds.height < 0) {
     return false;
   }
   size_t previous_offset = 0;
@@ -31,7 +36,10 @@ bool EditingGeometrySnapshot::IsStructurallyValid() const {
         !coverage.Contains(
             TextRange(unit.projection_offset, unit.projection_offset + 1)) ||
         (!first && unit.projection_offset <= previous_offset) ||
-        unit.bounds.width < 0 || unit.bounds.height < 0) {
+        !std::isfinite(unit.bounds.x) || !std::isfinite(unit.bounds.y) ||
+        !std::isfinite(unit.bounds.width) ||
+        !std::isfinite(unit.bounds.height) || unit.bounds.width < 0 ||
+        unit.bounds.height < 0 || unit.local_start > unit.local_end) {
       return false;
     }
     previous_offset = unit.projection_offset;
@@ -47,7 +55,8 @@ EditingOperationStatus ValidateTransaction(
     return EditingOperationStatus::kStaleRevision;
   }
   if (transaction.updates_text &&
-      !IsRangeValid(transaction.replacement_range, snapshot.text.size())) {
+      (transaction.replacement_range.reversed() ||
+       !IsRangeValid(transaction.replacement_range, snapshot.text.size()))) {
     return EditingOperationStatus::kInvalidRange;
   }
   const size_t resulting_length =

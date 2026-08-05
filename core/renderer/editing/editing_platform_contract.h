@@ -112,6 +112,12 @@ struct EditingGeometrySnapshot {
   bool IsStructurallyValid() const;
 };
 
+struct EditingProjectionSnapshot {
+  uint64_t revision{0};
+  size_t length{0};
+  std::vector<EditingSegment> segments;
+};
+
 struct EditingStateUpdate {
   EditingStateSnapshot snapshot;
   EditingStateChange changes{EditingStateChange::kNone};
@@ -140,6 +146,7 @@ class EditingPlatformSession {
   virtual void Deactivate() = 0;
   virtual bool IsActive() const = 0;
   virtual EditingStateSnapshot Snapshot() const = 0;
+  virtual EditingProjectionSnapshot ProjectionSnapshot() const = 0;
 
   virtual EditingPlatformResult ApplyTransaction(
       const NativeTextTransaction& transaction) = 0;

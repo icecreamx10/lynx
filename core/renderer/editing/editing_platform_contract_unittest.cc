@@ -92,5 +92,28 @@ TEST(EditingPlatformContractTest, RejectsOverlappingOrUnorderedGeometry) {
   EXPECT_FALSE(geometry.IsStructurallyValid());
 }
 
+TEST(EditingPlatformContractTest, RejectsReversedReplacementRange) {
+  EditingStateSnapshot snapshot;
+  snapshot.text = u"abc";
+  NativeTextTransaction transaction{
+      "insertText", true, TextRange(2, 1), u"x", TextRange(2), std::nullopt, 0};
+
+  EXPECT_EQ(ValidateTransaction(snapshot, transaction),
+            EditingOperationStatus::kInvalidRange);
+}
+
+TEST(EditingPlatformContractTest, ProjectionSnapshotIsMeasurementOnlyData) {
+  EditingProjectionSnapshot projection;
+  projection.revision = 8;
+  projection.length = 3;
+  projection.segments.push_back(
+      {10, 20, EditingSegmentKind::kText, u"abc", u"abc", 0, 3});
+
+  EXPECT_EQ(projection.revision, 8u);
+  EXPECT_EQ(projection.length, 3u);
+  ASSERT_EQ(projection.segments.size(), 1u);
+  EXPECT_EQ(projection.segments[0].owner_id, 20);
+}
+
 }  // namespace
 }  // namespace lynx::editing
