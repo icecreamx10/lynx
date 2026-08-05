@@ -18,6 +18,7 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.RemoteException;
+import android.text.InputType;
 import android.text.Layout;
 import android.text.Selection;
 import android.text.Spannable;
@@ -26,7 +27,11 @@ import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import androidx.annotation.ColorInt;
 import androidx.annotation.Keep;
 import androidx.annotation.Nullable;
@@ -43,6 +48,7 @@ import com.lynx.tasm.service.ILynxTextService.Page;
 import com.lynx.tasm.service.LynxServiceCenter;
 import com.lynx.tasm.utils.UIThreadUtils;
 import java.lang.ref.WeakReference;
+import java.text.BreakIterator;
 import java.util.ArrayList;
 
 @Keep
@@ -109,6 +115,28 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
   // save weak reference of selecting AndroidText to ensure that only one AndroidText is selected at
   // a time.
   private static WeakReference<AndroidText> sWeakSelectingAndroidText;
+  private static WeakReference<AndroidText> sActiveTextEditContextHost;
+
+  private TextEditContextSession mTextEditContextSession;
+  private final ArrayList<RectF> mEditContextSelectionRects = new ArrayList<>();
+  private final Paint mEditContextSelectionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private final Paint mEditContextCaretPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+  private boolean mEditContextSelectionCollapsed = true;
+  private int mEditContextSelectionStart = -1;
+  private int mEditContextSelectionEnd = -1;
+  private final PointF mEditContextStartHandle = new PointF(-1.f, -1.f);
+  private final PointF mEditContextEndHandle = new PointF(-1.f, -1.f);
+  private int mEditContextTouchAnchor = -1;
+  private long mLastEditContextTouchEventTime = Long.MIN_VALUE;
+  private int mLastEditContextTouchAction = -1;
+  private boolean mEditContextRootTouchActive;
+  private boolean mEditContextIgnoreTouchSequence;
+  private boolean mEditContextAdjustingStartHandle;
+  private boolean mEditContextAdjustingEndHandle;
+  private boolean mEditContextLongPressTriggered;
+  private Runnable mEditContextLongPressRunnable;
+  private float mEditContextTouchDownX;
+  private float mEditContextTouchDownY;
 
   private final class CheckForLongPress implements Runnable {
     private final float mX;
@@ -148,8 +176,102 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     setWillNotDraw(false);
     mTextSelectionColor = DEFAULT_TEXT_SELECTION_COLOR;
     mTextSelectionHandleColor = DEFAULT_TEXT_HANDLE_COLOR;
+    mEditContextSelectionPaint.setColor(DEFAULT_TEXT_SELECTION_COLOR);
+    mEditContextCaretPaint.setColor(DEFAULT_TEXT_HANDLE_COLOR);
     mHandleSize = mDefaultHandlePlatformLength =
         Math.round(((LynxContext) context).getScreenMetrics().density * DEFAULT_TEXT_HANDLE_SIZE);
+  }
+
+  void setTextEditContextSession(TextEditContextSession session) {
+    if (mTextEditContextSession == session) {
+      return;
+    }
+    if (mTextEditContextSession != null) {
+      if (session == null) {
+        deactivateTextEditContext();
+      } else {
+        mTextEditContextSession.deactivate();
+      }
+    }
+    mTextEditContextSession = session;
+    mEditContextSelectionRects.clear();
+    mEditContextTouchAnchor = -1;
+    setFocusableInTouchMode(session != null);
+    if (mTextEditContextSession != null && hasFocus()) {
+      mTextEditContextSession.activate();
+      sActiveTextEditContextHost = new WeakReference<>(this);
+    }
+    InputMethodManager manager =
+        (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (manager != null) {
+      manager.restartInput(this);
+    }
+  }
+
+  void activateTextEditContext() {
+    if (mTextEditContextSession == null || (!requestFocus() && !hasFocus())) {
+      return;
+    }
+    sActiveTextEditContextHost = new WeakReference<>(this);
+    InputMethodManager manager =
+        (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (manager != null) {
+      manager.restartInput(this);
+      post(() -> {
+        if (mTextEditContextSession != null && mTextEditContextSession.isActive() && hasFocus()) {
+          manager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+        }
+      });
+    }
+  }
+
+  void deactivateTextEditContext() {
+    if (hasFocus()) {
+      clearFocus();
+    }
+    InputMethodManager manager =
+        (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (manager != null) {
+      manager.hideSoftInputFromWindow(getWindowToken(), 0);
+    }
+  }
+
+  @Override
+  public boolean onCheckIsTextEditor() {
+    return mTextEditContextSession != null && mTextEditContextSession.isActive();
+  }
+
+  @Override
+  public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+    TextEditContextSession session = mTextEditContextSession;
+    TextEditContextSnapshot snapshot = session == null ? null : session.snapshot();
+    if (session == null || !session.isActive() || snapshot == null) {
+      return null;
+    }
+    outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+    outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+    outAttrs.initialSelStart = snapshot.selectionBase;
+    outAttrs.initialSelEnd = snapshot.selectionExtent;
+    return new TextEditContextInputConnection(this, session);
+  }
+
+  @Override
+  protected void onFocusChanged(boolean gainFocus, int direction, Rect previouslyFocusedRect) {
+    super.onFocusChanged(gainFocus, direction, previouslyFocusedRect);
+    if (mTextEditContextSession == null) {
+      return;
+    }
+    if (gainFocus) {
+      mTextEditContextSession.activate();
+      sActiveTextEditContextHost = new WeakReference<>(this);
+    } else {
+      mTextEditContextSession.deactivate();
+      AndroidText activeHost =
+          sActiveTextEditContextHost == null ? null : sActiveTextEditContextHost.get();
+      if (activeHost == this) {
+        sActiveTextEditContextHost = null;
+      }
+    }
   }
 
   public void setDisplayNone(boolean displayNone) {
@@ -265,6 +387,21 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
 
   @Override
   public boolean onTouchEvent(MotionEvent event) {
+    if (mTextEditContextSession != null) {
+      if (mEditContextIgnoreTouchSequence) {
+        if (event.getActionMasked() == MotionEvent.ACTION_UP
+            || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+          resetTextEditContextTouchGesture();
+        }
+        return true;
+      }
+      if (event.getAction() == MotionEvent.ACTION_DOWN && !hasFocus()) {
+        activateTextEditContext();
+      }
+      if (handleTextEditContextTouch(event)) {
+        return true;
+      }
+    }
     if (!hasTextSelectionContent() || !mEnableTextSelection || mEnableCustomTextSelection) {
       return super.onTouchEvent(event);
     }
@@ -346,6 +483,8 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
       return;
     }
     super.dispatchDraw(canvas);
+    refreshTextEditContextGeometry();
+    drawTextEditContextSelection(canvas);
     if (mTextraPage != null) {
       drawTextServiceSelectHandle(canvas);
       return;
@@ -365,6 +504,304 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     canvas.restore();
   }
 
+  private boolean handleTextEditContextTouch(MotionEvent event) {
+    TextEditContextSession session = mTextEditContextSession;
+    if (session == null || !session.isActive()) {
+      return false;
+    }
+    int action = event.getActionMasked();
+    if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_MOVE
+        && action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) {
+      return false;
+    }
+    if (mLastEditContextTouchEventTime == event.getEventTime()
+        && mLastEditContextTouchAction == action) {
+      return true;
+    }
+    mLastEditContextTouchEventTime = event.getEventTime();
+    mLastEditContextTouchAction = action;
+    if (action == MotionEvent.ACTION_CANCEL) {
+      resetTextEditContextTouchGesture();
+      return true;
+    }
+    TextEditContextSnapshot state = session.snapshot();
+    if (state == null) {
+      return false;
+    }
+    int anchor = action == MotionEvent.ACTION_DOWN ? -1 : mEditContextTouchAnchor;
+    TextEditContextResult result =
+        session.setSelectionFromPoint(this, event.getX(), event.getY(), anchor, state.revision);
+    if (result != null && result.accepted && result.snapshot != null) {
+      if (action == MotionEvent.ACTION_DOWN) {
+        mEditContextTouchAnchor = result.snapshot.selectionBase;
+      }
+      updateTextEditContextSelection(result.snapshot);
+      notifyTextEditContextSelection(result.snapshot);
+      invalidate();
+    }
+    if (action == MotionEvent.ACTION_UP) {
+      finishTextEditContextTouchGesture();
+    }
+    return true;
+  }
+
+  private boolean isNearEditContextHandle(PointF handle, float x, float y) {
+    return !mEditContextSelectionCollapsed && handle.x >= 0.f && handle.y >= 0.f
+        && distanceBetweenPoints(handle, x, y) < RESPONSE_TOUCH_RADIUS;
+  }
+
+  private void beginTextEditContextTouchGesture(MotionEvent event) {
+    mEditContextIgnoreTouchSequence = false;
+    mEditContextLongPressTriggered = false;
+    mEditContextTouchDownX = event.getX();
+    mEditContextTouchDownY = event.getY();
+    mEditContextAdjustingStartHandle =
+        isNearEditContextHandle(mEditContextStartHandle, event.getX(), event.getY());
+    mEditContextAdjustingEndHandle = !mEditContextAdjustingStartHandle
+        && isNearEditContextHandle(mEditContextEndHandle, event.getX(), event.getY());
+    if (mEditContextAdjustingStartHandle || mEditContextAdjustingEndHandle) {
+      mEditContextTouchAnchor =
+          mEditContextAdjustingStartHandle ? mEditContextSelectionEnd : mEditContextSelectionStart;
+      requestDisallowInterceptTouchEvent(true);
+      return;
+    }
+    removeTextEditContextLongPressCallback();
+    mEditContextLongPressRunnable = () -> {
+      if (!mEditContextRootTouchActive || mEditContextIgnoreTouchSequence) {
+        return;
+      }
+      mEditContextLongPressTriggered = selectTextEditContextWordAtCaret();
+      if (mEditContextLongPressTriggered) {
+        requestDisallowInterceptTouchEvent(true);
+      }
+    };
+    postDelayed(mEditContextLongPressRunnable, ViewConfiguration.getLongPressTimeout());
+  }
+
+  private boolean selectTextEditContextWordAtCaret() {
+    TextEditContextSession session = mTextEditContextSession;
+    TextEditContextSnapshot state = session == null ? null : session.snapshot();
+    if (session == null || state == null || state.text.isEmpty() || mEditContextTouchAnchor < 0) {
+      return false;
+    }
+    int index = Math.min(mEditContextTouchAnchor, state.text.length() - 1);
+    if (index > 0 && Character.isWhitespace(state.text.charAt(index))
+        && !Character.isWhitespace(state.text.charAt(index - 1))) {
+      index--;
+    }
+    int start;
+    int end;
+    if (state.text.charAt(index) == '\uFFFC') {
+      start = index;
+      end = index + 1;
+    } else {
+      BreakIterator iterator = BreakIterator.getWordInstance();
+      iterator.setText(state.text);
+      start = iterator.preceding(index + 1);
+      end = iterator.following(index);
+      if (start == BreakIterator.DONE || end == BreakIterator.DONE || start == end) {
+        start = index;
+        end = Math.min(state.text.length(),
+            index + Character.charCount(Character.codePointAt(state.text, index)));
+      }
+    }
+    TextEditContextResult result = session.apply(new TextEditContextSession.Transaction("", false,
+        0, 0, "", start, end, state.compositionStart, state.compositionEnd, state.revision));
+    if (result == null || !result.accepted || result.snapshot == null) {
+      return false;
+    }
+    mEditContextTouchAnchor = result.snapshot.selectionBase;
+    updateTextEditContextSelection(result.snapshot);
+    notifyTextEditContextSelection(result.snapshot);
+    invalidate();
+    return true;
+  }
+
+  private void removeTextEditContextLongPressCallback() {
+    if (mEditContextLongPressRunnable != null) {
+      removeCallbacks(mEditContextLongPressRunnable);
+      mEditContextLongPressRunnable = null;
+    }
+  }
+
+  private void finishTextEditContextTouchGesture() {
+    removeTextEditContextLongPressCallback();
+    requestDisallowInterceptTouchEvent(false);
+    mEditContextTouchAnchor = -1;
+    mEditContextAdjustingStartHandle = false;
+    mEditContextAdjustingEndHandle = false;
+    mEditContextLongPressTriggered = false;
+  }
+
+  private void resetTextEditContextTouchGesture() {
+    finishTextEditContextTouchGesture();
+    mEditContextRootTouchActive = false;
+    mEditContextIgnoreTouchSequence = false;
+  }
+
+  public boolean hasActiveTextEditContext() {
+    return mTextEditContextSession != null && mTextEditContextSession.isActive();
+  }
+
+  public boolean dispatchTextEditContextTouchFromRoot(MotionEvent event) {
+    if (!hasActiveTextEditContext()) {
+      return false;
+    }
+    int[] screen = new int[2];
+    getLocationOnScreen(screen);
+    MotionEvent localEvent = MotionEvent.obtain(event);
+    localEvent.setLocation(event.getRawX() - screen[0], event.getRawY() - screen[1]);
+    try {
+      int action = localEvent.getActionMasked();
+      if (action == MotionEvent.ACTION_DOWN) {
+        mEditContextRootTouchActive = localEvent.getX() >= 0.f && localEvent.getX() < getWidth()
+            && localEvent.getY() >= 0.f && localEvent.getY() < getHeight();
+        if (mEditContextRootTouchActive) {
+          beginTextEditContextTouchGesture(localEvent);
+        }
+      }
+      if (!mEditContextRootTouchActive) {
+        return false;
+      }
+      if (action == MotionEvent.ACTION_MOVE && !mEditContextLongPressTriggered
+          && !mEditContextAdjustingStartHandle && !mEditContextAdjustingEndHandle) {
+        float deltaX = localEvent.getX() - mEditContextTouchDownX;
+        float deltaY = localEvent.getY() - mEditContextTouchDownY;
+        int touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        if (Math.abs(deltaY) > touchSlop && Math.abs(deltaY) > Math.abs(deltaX)) {
+          removeTextEditContextLongPressCallback();
+          mEditContextRootTouchActive = false;
+          mEditContextIgnoreTouchSequence = true;
+          mEditContextTouchAnchor = -1;
+          return false;
+        }
+        if (Math.abs(deltaX) > touchSlop || Math.abs(deltaY) > touchSlop) {
+          removeTextEditContextLongPressCallback();
+        }
+      }
+      if (!mEditContextAdjustingStartHandle && !mEditContextAdjustingEndHandle) {
+        boolean selectionGestureCaptured = mEditContextLongPressTriggered;
+        handleTextEditContextTouch(localEvent);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+          mEditContextRootTouchActive = false;
+        }
+        return selectionGestureCaptured;
+      }
+      TextEditContextSnapshot state = mTextEditContextSession.snapshot();
+      if (state == null) {
+        return false;
+      }
+      mLastEditContextTouchEventTime = localEvent.getEventTime();
+      mLastEditContextTouchAction = action;
+      TextEditContextResult result = mTextEditContextSession.setSelectionFromPoint(
+          this, localEvent.getX(), localEvent.getY(), mEditContextTouchAnchor, state.revision);
+      if (result != null && result.accepted && result.snapshot != null) {
+        updateTextEditContextSelection(result.snapshot);
+        notifyTextEditContextSelection(result.snapshot);
+        invalidate();
+      }
+      if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+        resetTextEditContextTouchGesture();
+      }
+      return true;
+    } finally {
+      localEvent.recycle();
+    }
+  }
+
+  public static boolean dispatchTouchToActiveTextEditContext(MotionEvent event) {
+    AndroidText host = sActiveTextEditContextHost == null ? null : sActiveTextEditContextHost.get();
+    return host != null && host.dispatchTextEditContextTouchFromRoot(event);
+  }
+
+  void refreshTextEditContextGeometry() {
+    TextEditContextSession session = mTextEditContextSession;
+    TextEditContextSnapshot state = session == null ? null : session.snapshot();
+    if (session == null || state == null || !session.isActive() || !session.refreshLayout(this)) {
+      mEditContextSelectionRects.clear();
+    } else {
+      updateTextEditContextSelection(state);
+    }
+  }
+
+  void onTextEditContextStateChanged(
+      TextEditContextSession source, TextEditContextSnapshot callbackState) {
+    TextEditContextSnapshot state;
+    if (source == null || source != mTextEditContextSession || callbackState == null
+        || (state = source.snapshot()) == null || state.revision < callbackState.revision) {
+      return;
+    }
+    refreshTextEditContextGeometry();
+    notifyTextEditContextSelection(state);
+    invalidate();
+  }
+
+  private void updateTextEditContextSelection(TextEditContextSnapshot state) {
+    if (mTextEditContextSession == null) {
+      return;
+    }
+    float[] rects =
+        mTextEditContextSession.selectionRects(state.selectionBase, state.selectionExtent);
+    if (rects == null) {
+      rects = new float[0];
+    }
+    int[] screen = new int[2];
+    getLocationOnScreen(screen);
+    mEditContextSelectionRects.clear();
+    for (int index = 0; index + 3 < rects.length; index += 4) {
+      mEditContextSelectionRects.add(new RectF(rects[index] - screen[0],
+          rects[index + 1] - screen[1], rects[index] - screen[0] + rects[index + 2],
+          rects[index + 1] - screen[1] + rects[index + 3]));
+    }
+    mEditContextSelectionCollapsed = state.selectionBase == state.selectionExtent;
+    mEditContextSelectionStart = Math.min(state.selectionBase, state.selectionExtent);
+    mEditContextSelectionEnd = Math.max(state.selectionBase, state.selectionExtent);
+    if (!mEditContextSelectionCollapsed && !mEditContextSelectionRects.isEmpty()) {
+      RectF first = mEditContextSelectionRects.get(0);
+      RectF last = mEditContextSelectionRects.get(mEditContextSelectionRects.size() - 1);
+      mEditContextStartHandle.set(first.left, first.bottom);
+      mEditContextEndHandle.set(last.right, last.bottom);
+    } else {
+      mEditContextStartHandle.set(-1.f, -1.f);
+      mEditContextEndHandle.set(-1.f, -1.f);
+    }
+  }
+
+  private void notifyTextEditContextSelection(TextEditContextSnapshot state) {
+    InputMethodManager manager =
+        (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    if (manager != null) {
+      manager.updateSelection(this, state.selectionBase, state.selectionExtent,
+          state.compositionStart, state.compositionEnd);
+    }
+  }
+
+  private void drawTextEditContextSelection(Canvas canvas) {
+    Paint paint =
+        mEditContextSelectionCollapsed ? mEditContextCaretPaint : mEditContextSelectionPaint;
+    for (RectF rect : mEditContextSelectionRects) {
+      canvas.drawRect(rect, paint);
+    }
+    if (mEditContextSelectionCollapsed || mEditContextStartHandle.x < 0.f
+        || mEditContextEndHandle.x < 0.f) {
+      return;
+    }
+    if (mSelectionLeftCursor == null || mSelectionRightCursor == null) {
+      initSelectionCursor(getContext());
+    }
+    updateSelectionStyle();
+    canvas.save();
+    canvas.translate(mEditContextStartHandle.x - mSelectionLeftCursor.getBounds().width() / 2.f,
+        mEditContextStartHandle.y);
+    mSelectionLeftCursor.draw(canvas);
+    canvas.restore();
+    canvas.save();
+    canvas.translate(mEditContextEndHandle.x - mSelectionRightCursor.getBounds().width() / 2.f,
+        mEditContextEndHandle.y);
+    mSelectionRightCursor.draw(canvas);
+    canvas.restore();
+  }
+
   private void drawTextServiceSelectHandle(Canvas canvas) {
     if (!mIsInSelection || mSelectionLeftCursor == null || mSelectionRightCursor == null) {
       return;
@@ -375,11 +812,11 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     canvas.restore();
   }
 
-  private float getTextDrawOffsetX() {
+  float getTextDrawOffsetX() {
     return getPaddingLeft() + (mTextTranslateOffset != null ? mTextTranslateOffset.x : 0);
   }
 
-  private float getTextDrawOffsetY() {
+  float getTextDrawOffsetY() {
     return getPaddingTop() + (mTextTranslateOffset != null ? mTextTranslateOffset.y : 0);
   }
 

@@ -1,0 +1,228 @@
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+
+package com.lynx.tasm.behavior.ui.text;
+
+import android.graphics.Rect;
+import android.text.Layout;
+import com.lynx.tasm.behavior.LynxContext;
+import com.lynx.tasm.behavior.LynxUIOwner;
+import com.lynx.tasm.behavior.ui.LynxBaseUI;
+
+final class TextEditContextLayoutCollector {
+  private static final int FLAG_ATOMIC = 4;
+  private static final int FLAG_BLOCK = 8;
+  private static final int FLAG_HAS_DIRECTION = 1;
+  private static final int FLAG_RIGHT_TO_LEFT = 2;
+  private static final long INVALID_OWNER_ID = -1;
+
+  private static final class TextOwner {
+    final Layout layout;
+    final float originX;
+    final float originY;
+
+    TextOwner(Layout layout, float originX, float originY) {
+      this.layout = layout;
+      this.originX = originX;
+      this.originY = originY;
+    }
+  }
+
+  private TextEditContextLayoutCollector() {}
+
+  static TextEditContextLayoutData collect(
+      AndroidText hostView, TextEditContextLayoutSnapshot projection) {
+    LynxContext context =
+        hostView.getContext() instanceof LynxContext ? (LynxContext) hostView.getContext() : null;
+    LynxUIOwner owner = context == null ? null : context.getLynxUIOwner();
+    if (owner == null || !isWellFormed(projection)) {
+      return null;
+    }
+    int segmentCount = projection.segmentCount();
+    int unitCount = segmentCount == 0 ? 0 : projection.ends[segmentCount - 1];
+    int[] hostScreen = new int[2];
+    hostView.getLocationOnScreen(hostScreen);
+    TextEditContextLayoutData result = new TextEditContextLayoutData(projection.revision, unitCount,
+        new float[] {hostScreen[0], hostScreen[1], hostView.getWidth(), hostView.getHeight()});
+    int[] ownerCursors = new int[segmentCount];
+    long[] cursorOwnerIds = new long[segmentCount];
+    int cursorCount = 0;
+
+    for (int segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+      int start = projection.starts[segmentIndex];
+      int end = projection.ends[segmentIndex];
+      int kind = projection.kinds[segmentIndex];
+      if (start < 0 || end < start || end > unitCount) {
+        return null;
+      }
+      if (kind != 0) {
+        if (!populateAtomicUnit(result, projection, owner, segmentIndex, start, end, kind)) {
+          return null;
+        }
+        continue;
+      }
+
+      long ownerId = projection.ownerIds[segmentIndex];
+      TextOwner textOwner = findTextOwner(owner, ownerId);
+      if (textOwner == null) {
+        return null;
+      }
+      String needle = projection.texts[segmentIndex];
+      if (end - start != needle.length()) {
+        return null;
+      }
+      int cursorIndex = findCursorOwner(cursorOwnerIds, cursorCount, ownerId);
+      int searchStart = cursorIndex < 0 ? 0 : ownerCursors[cursorIndex];
+      String renderedText = textOwner.layout.getText().toString();
+      int rawStart = renderedText.indexOf(needle, searchStart);
+      if (rawStart < 0) {
+        rawStart = renderedText.indexOf(needle);
+      }
+      if (rawStart < 0) {
+        return null;
+      }
+      if (cursorIndex < 0) {
+        cursorIndex = cursorCount++;
+        cursorOwnerIds[cursorIndex] = ownerId;
+      }
+      ownerCursors[cursorIndex] = rawStart + needle.length();
+      for (int offset = 0; offset < needle.length(); offset++) {
+        if (!populateTextUnit(result, start + offset, projection.segmentIds[segmentIndex], ownerId,
+                rawStart + offset, textOwner.layout, textOwner.originX, textOwner.originY)) {
+          return null;
+        }
+      }
+    }
+    return result;
+  }
+
+  private static boolean populateAtomicUnit(TextEditContextLayoutData result,
+      TextEditContextLayoutSnapshot projection, LynxUIOwner owner, int segmentIndex, int start,
+      int end, int kind) {
+    LynxBaseUI segmentUI = owner.findLynxUIBySign((int) projection.segmentIds[segmentIndex]);
+    if (segmentUI == null || end - start != 1) {
+      return false;
+    }
+    Rect bounds = segmentUI.getRectToWindow();
+    result.segmentIds[start] = projection.segmentIds[segmentIndex];
+    result.ownerIds[start] = INVALID_OWNER_ID;
+    result.localStarts[start] = 0;
+    result.localEnds[start] = 0;
+    result.boundaryEdges[start] = projection.boundaryEdges[segmentIndex];
+    if (kind == 2) {
+      setBounds(result, start, bounds.left, bounds.top, Math.max(1, bounds.width()),
+          Math.max(1, bounds.height()));
+      result.flags[start] =
+          (isBlockAtomic(projection, segmentIndex) ? FLAG_BLOCK : 0) | FLAG_ATOMIC;
+    } else {
+      boolean leading = projection.boundaryEdges[segmentIndex] == 1;
+      setBounds(result, start, leading ? bounds.left : bounds.right,
+          leading ? bounds.top : bounds.bottom, 1.0f, 1.0f);
+    }
+    return true;
+  }
+
+  static boolean isBlockAtomic(TextEditContextLayoutSnapshot projection, int segmentIndex) {
+    if (segmentIndex < 0 || segmentIndex >= projection.segmentCount()
+        || projection.kinds[segmentIndex] != 2) {
+      return false;
+    }
+    long segmentId = projection.segmentIds[segmentIndex];
+    for (int index = Math.max(0, segmentIndex - 1);
+         index <= Math.min(projection.segmentCount() - 1, segmentIndex + 1); index++) {
+      if (index != segmentIndex && projection.segmentIds[index] == segmentId
+          && projection.kinds[index] == 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean isWellFormed(TextEditContextLayoutSnapshot projection) {
+    int count = projection.segmentCount();
+    return projection.ownerIds.length == count && projection.kinds.length == count
+        && projection.starts.length == count && projection.ends.length == count
+        && projection.boundaryEdges.length == count && projection.texts.length == count;
+  }
+
+  private static int findCursorOwner(long[] ownerIds, int count, long ownerId) {
+    for (int index = 0; index < count; index++) {
+      if (ownerIds[index] == ownerId) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private static TextOwner findTextOwner(LynxUIOwner uiOwner, long ownerId) {
+    FlattenUIText text;
+    Layout layout;
+    LynxBaseUI ui = uiOwner.findLynxUIBySign((int) ownerId);
+    if (ui instanceof UIText) {
+      AndroidText view = (AndroidText) ((UIText) ui).getView();
+      Layout layout2 = view == null ? null : view.getTextLayout();
+      if (layout2 == null) {
+        return null;
+      }
+      int[] screen = new int[2];
+      view.getLocationOnScreen(screen);
+      return new TextOwner(
+          layout2, screen[0] + view.getTextDrawOffsetX(), screen[1] + view.getTextDrawOffsetY());
+    }
+    if (!(ui instanceof FlattenUIText)
+        || (layout = (text = (FlattenUIText) ui).getTextLayout()) == null) {
+      return null;
+    }
+    Rect rect = text.getRectToWindow();
+    return new TextOwner(
+        layout, rect.left + text.getDrawOffsetLeft(), rect.top + text.getDrawOffsetTop());
+  }
+
+  static boolean populateTextUnit(TextEditContextLayoutData result, int projectionOffset,
+      long segmentId, long ownerId, int localOffset, Layout layout, float originX, float originY) {
+    float endX;
+    float lineLeft;
+    CharSequence text = layout.getText();
+    if (localOffset < 0 || localOffset >= text.length()) {
+      return false;
+    }
+    int line = layout.getLineForOffset(localOffset);
+    int nextLine = layout.getLineForOffset(localOffset + 1);
+    boolean rightToLeft = layout.isRtlCharAt(localOffset);
+    float startX = layout.getPrimaryHorizontal(localOffset);
+    float endX2 = layout.getPrimaryHorizontal(localOffset + 1);
+    if (nextLine == line) {
+      endX = endX2;
+    } else {
+      char character = text.charAt(localOffset);
+      if (character == '\n' || character == '\r') {
+        lineLeft = startX;
+      } else {
+        lineLeft = rightToLeft ? layout.getLineLeft(line) : layout.getLineRight(line);
+      }
+      float endX3 = lineLeft;
+      endX = endX3;
+    }
+    float left = originX + Math.min(startX, endX);
+    float top = originY + layout.getLineTop(line);
+    float width = Math.max(1.0f, Math.abs(endX - startX));
+    float height = Math.max(1, layout.getLineBottom(line) - layout.getLineTop(line));
+    result.segmentIds[projectionOffset] = segmentId;
+    result.ownerIds[projectionOffset] = ownerId;
+    result.localStarts[projectionOffset] = localOffset;
+    result.localEnds[projectionOffset] = localOffset + 1;
+    setBounds(result, projectionOffset, left, top, width, height);
+    result.flags[projectionOffset] = (rightToLeft ? 2 : 0) | 1;
+    return true;
+  }
+
+  private static void setBounds(
+      TextEditContextLayoutData result, int index, float x, float y, float width, float height) {
+    int offset = index * 4;
+    result.bounds[offset] = x;
+    result.bounds[offset + 1] = y;
+    result.bounds[offset + 2] = width;
+    result.bounds[offset + 3] = height;
+  }
+}

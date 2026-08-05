@@ -41,6 +41,7 @@ group("lynx_test") {
     "../../core/list:list_container_testset_group",
     "../../core/renderer/css:css_tests",
     "../../core/renderer/dom:dom_tests",
+    "../../core/renderer/editing:editing_test_exec",
     "../../core/renderer/events:events_test_exec",
     "../../core/renderer/pipeline:pipeline_test_exec",
     "../../core/renderer/signal:signal_test_exec",

@@ -1,0 +1,26 @@
+# Copyright 2026 The Lynx Authors. All rights reserved.
+# Licensed under the Apache License Version 2.0 that can be found in the
+# LICENSE file in the root directory of this source tree.
+
+import("../../../testing/test.gni")
+import("../../Lynx.gni")
+
+lynx_core_source_set("editing") {
+  sources = [
+    "editing_host_registry.cc",
+    "editing_host_registry.h",
+    "editing_projection.cc",
+    "editing_projection.h",
+    "editing_types.h",
+  ]
+}
+
+unittest_set("editing_testset") {
+  sources = [ "editing_projection_unittest.cc" ]
+  deps = [ ":editing" ]
+}
+
+unittest_exec("editing_test_exec") {
+  sources = []
+  deps = [ ":editing_testset" ]
+}

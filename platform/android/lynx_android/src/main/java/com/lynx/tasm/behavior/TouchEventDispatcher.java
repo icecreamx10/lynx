@@ -37,6 +37,7 @@ import com.lynx.tasm.behavior.event.EventTargetBase;
 import com.lynx.tasm.behavior.ui.LynxBaseUI;
 import com.lynx.tasm.behavior.ui.UIBody;
 import com.lynx.tasm.behavior.ui.UIGroup;
+import com.lynx.tasm.behavior.ui.text.AndroidText;
 import com.lynx.tasm.behavior.ui.utils.LynxUIHelper;
 import com.lynx.tasm.event.LynxEventDetail;
 import com.lynx.tasm.event.LynxEventDetail.EVENT_TYPE;
@@ -137,6 +138,7 @@ public class TouchEventDispatcher {
   private boolean mDispatchingGestureArena = false;
   private boolean mPendingPlatformGestureStatusCheck = false;
   private boolean mPanGestureRecognized = false;
+  private boolean mTextEditContextTouchCaptured = false;
 
   private static final String TAG = "LynxTouchEventDispatcher";
 
@@ -314,6 +316,15 @@ public class TouchEventDispatcher {
   }
 
   public boolean consumeSlideEvent(MotionEvent ev) {
+    if (mTextEditContextTouchCaptured) {
+      boolean terminal = ev.getActionMasked() == MotionEvent.ACTION_UP
+          || ev.getActionMasked() == MotionEvent.ACTION_CANCEL;
+      requestNativeDisallowIntercept(!terminal);
+      if (terminal) {
+        mTextEditContextTouchCaptured = false;
+      }
+      return true;
+    }
     switch (ev.getAction()) {
       case MotionEvent.ACTION_DOWN: {
         // When the finger is pressed, set mConsumeSlideEvent to Undefined.
@@ -1297,6 +1308,13 @@ public class TouchEventDispatcher {
   }
 
   public boolean onTouchEvent(MotionEvent ev, UIGroup rootUi) {
+    if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+      mTextEditContextTouchCaptured = false;
+    }
+    if (AndroidText.dispatchTouchToActiveTextEditContext(ev)) {
+      mTextEditContextTouchCaptured = true;
+      return true;
+    }
     IPaintingContext paintingContext = getPlatformEventPaintingContext();
     if (paintingContext != null) {
       return handlePlatformMotionEvent(ev, rootUi, paintingContext);
