@@ -9,6 +9,8 @@ lynx_core_source_set("editing") {
   sources = [
     "editing_host_registry.cc",
     "editing_host_registry.h",
+    "editing_platform_contract.cc",
+    "editing_platform_contract.h",
     "editing_projection.cc",
     "editing_projection.h",
     "editing_types.h",
@@ -16,7 +18,10 @@ lynx_core_source_set("editing") {
 }
 
 unittest_set("editing_testset") {
-  sources = [ "editing_projection_unittest.cc" ]
+  sources = [
+    "editing_platform_contract_unittest.cc",
+    "editing_projection_unittest.cc",
+  ]
   deps = [ ":editing" ]
 }
 
