@@ -63,6 +63,9 @@ void ThrowRangeError(Napi::Env env, const char* message) {
 
 }  // namespace
 
+thread_local NapiEditContext::FrontendBridgeDispatcher
+    NapiEditContext::frontend_bridge_dispatcher_ = nullptr;
+
 NapiEditContext::NapiEditContext(const Napi::CallbackInfo& info)
     : NapiBridge(info) {
   set_type_id(reinterpret_cast<void*>(kEditContextClassID));
@@ -141,6 +144,11 @@ NapiEditContext* NapiEditContext::Unwrap(const Napi::Value& value) {
   return Napi::InstanceWrap<NapiEditContext>::Unwrap(value.As<Napi::Object>());
 }
 
+void NapiEditContext::SetFrontendBridgeDispatcher(
+    FrontendBridgeDispatcher dispatcher) {
+  frontend_bridge_dispatcher_ = dispatcher;
+}
+
 bool NapiEditContext::AssociateElement(int64_t host_id,
                                        const Napi::Object& element) {
   if (!controller_ || element.IsEmpty()) {
@@ -171,6 +179,7 @@ void NapiEditContext::DetachElement() {
   if (controller_) {
     controller_->Detach();
   }
+  frontend_bridge_state_.reset();
 }
 
 Napi::Value NapiEditContext::GetText(const Napi::CallbackInfo& info) {
@@ -273,6 +282,49 @@ Napi::Value NapiEditContext::RemoveEventListener(
   return info.Env().Undefined();
 }
 
+Napi::Value NapiEditContext::AttachElementForFrontend(
+    const Napi::CallbackInfo& info) {
+  if (!frontend_bridge_dispatcher_) {
+    Napi::Error::New(info.Env(), "EditContext frontend bridge is unavailable")
+        .ThrowAsJavaScriptException();
+    return info.Env().Undefined();
+  }
+  return frontend_bridge_dispatcher_(this, FrontendBridgeOperation::kAttach,
+                                     info);
+}
+
+Napi::Value NapiEditContext::DetachElementForFrontend(
+    const Napi::CallbackInfo& info) {
+  return frontend_bridge_dispatcher_
+             ? frontend_bridge_dispatcher_(
+                   this, FrontendBridgeOperation::kDetach, info)
+             : info.Env().Undefined();
+}
+
+Napi::Value NapiEditContext::FocusElementForFrontend(
+    const Napi::CallbackInfo& info) {
+  return frontend_bridge_dispatcher_
+             ? frontend_bridge_dispatcher_(
+                   this, FrontendBridgeOperation::kFocus, info)
+             : info.Env().Undefined();
+}
+
+Napi::Value NapiEditContext::BlurElementForFrontend(
+    const Napi::CallbackInfo& info) {
+  return frontend_bridge_dispatcher_
+             ? frontend_bridge_dispatcher_(this, FrontendBridgeOperation::kBlur,
+                                           info)
+             : info.Env().Undefined();
+}
+
+Napi::Value NapiEditContext::GetElementContextForFrontend(
+    const Napi::CallbackInfo& info) {
+  return frontend_bridge_dispatcher_
+             ? frontend_bridge_dispatcher_(nullptr,
+                                           FrontendBridgeOperation::kGet, info)
+             : info.Env().Null();
+}
+
 const char* NapiEditContext::EventTypeName(editing::EditContextEventType type) {
   switch (type) {
     case editing::EditContextEventType::kTextUpdate:
@@ -355,6 +407,12 @@ Napi::Class* NapiEditContext::Class(Napi::Env env) {
   AddMethod(properties, "addEventListener", &NapiEditContext::AddEventListener);
   AddMethod(properties, "removeEventListener",
             &NapiEditContext::RemoveEventListener);
+  AddMethod(properties, "__attachElement",
+            &NapiEditContext::AttachElementForFrontend);
+  AddMethod(properties, "__detachElement",
+            &NapiEditContext::DetachElementForFrontend);
+  AddMethod(properties, "__focus", &NapiEditContext::FocusElementForFrontend);
+  AddMethod(properties, "__blur", &NapiEditContext::BlurElementForFrontend);
 
   clazz = new Napi::Class(
       Wrapped::DefineClass(env, "EditContext", properties.size(),
@@ -379,6 +437,11 @@ Napi::Function NapiEditContext::Constructor(Napi::Env env) {
 void NapiEditContext::Install(Napi::Env env, Napi::Object target) {
   if (!target.Has("EditContext").FromMaybe(false)) {
     target.Set("EditContext", Constructor(env));
+  }
+  if (!target.Has("__GetEditContextForElement").FromMaybe(false)) {
+    target.Set("__GetEditContextForElement",
+               Napi::Function::New(env, &GetElementContextForFrontend,
+                                   "__GetEditContextForElement"));
   }
 }
 

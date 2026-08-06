@@ -5,7 +5,8 @@
   "scripts": {
     "build": "rspeedy build",
     "build:dev": "rspeedy build --mode=development",
-    "dev": "rspeedy dev"
+    "dev": "rspeedy dev",
+    "test:edit-context-bridge": "node --test edit-context-frontend-bridge.test.mjs"
   },
   "dependencies": {
     "@explorer/lib": "workspace:*",

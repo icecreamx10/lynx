@@ -17,9 +17,13 @@
 #endif
 
 namespace lynx {
+namespace tasm {
+class TemplateAssembler;
+}
 namespace worklet {
 
 class EditContextBindingRegistry;
+class LepusApiHandler;
 class LepusLynx;
 
 class NapiLoaderUI : public runtime::js::NapiEnvironment::Delegate {
@@ -32,6 +36,10 @@ class NapiLoaderUI : public runtime::js::NapiEnvironment::Delegate {
   lynx::worklet::LepusLynx* lepus_lynx() { return lynx_; }
   EditContextBindingRegistry* edit_context_binding_registry() {
     return edit_context_binding_registry_.get();
+  }
+  tasm::TemplateAssembler* template_assembler() const;
+  const std::shared_ptr<LepusApiHandler>& element_task_handler() const {
+    return element_task_handler_;
   }
   void InvokeLepusBridge(const int32_t callback_id, const lepus::Value& data);
 
@@ -46,6 +54,7 @@ class NapiLoaderUI : public runtime::js::NapiEnvironment::Delegate {
 
   lynx::worklet::LepusLynx* lynx_ = nullptr;
   std::unique_ptr<EditContextBindingRegistry> edit_context_binding_registry_;
+  std::shared_ptr<LepusApiHandler> element_task_handler_;
   runtime::MTSRuntime* context_ = nullptr;
 };
 

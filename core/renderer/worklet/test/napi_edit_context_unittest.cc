@@ -68,6 +68,11 @@ TEST_F(NapiEditContextTest, ConstructorAndMutatorsUseUtf16Offsets) {
     });
     context.text === 'a\ud83d\ude00z' &&
       context.selectionStart === 1 && context.selectionEnd === 3 &&
+      typeof context.__attachElement === 'function' &&
+      typeof context.__detachElement === 'function' &&
+      typeof context.__focus === 'function' &&
+      typeof context.__blur === 'function' &&
+      typeof globalThis.__GetEditContextForElement === 'function' &&
       (context.updateText(1, 3, 'X'), context.text === 'aXz') &&
       (context.updateSelection(2, 1), context.selectionStart === 2 &&
        context.selectionEnd === 1)
@@ -94,7 +99,8 @@ TEST_F(NapiEditContextTest, NativeModelDispatchesSampleEventShape) {
       event => events.push(event.type));
     context.addEventListener('textupdate', event => events.push([
       event.type, event.updateRangeStart, event.updateRangeEnd, event.text,
-      event.selectionStart, event.selectionEnd
+      event.selectionStart, event.selectionEnd, context.text,
+      context.selectionStart, context.selectionEnd
     ].join(':')));
     context.addEventListener('compositionend',
       event => events.push(event.type));
@@ -114,9 +120,23 @@ TEST_F(NapiEditContextTest, NativeModelDispatchesSampleEventShape) {
   ExpectScriptTrue(R"(
     events.length === 4 &&
       events[0] === 'compositionstart' &&
-      events[1] === 'textupdate:1:2:XY:3:3' &&
-      events[2] === 'textupdate:1:3:Q:2:2' &&
+      events[1] === 'textupdate:1:2:XY:3:3:aXYc:3:3' &&
+      events[2] === 'textupdate:1:3:Q:2:2:aQc:2:2' &&
       events[3] === 'compositionend'
+  )");
+}
+
+TEST_F(NapiEditContextTest, ProgrammaticUpdatesDoNotEchoTextUpdateEvents) {
+  ExpectScriptTrue(R"(
+    globalThis.events = [];
+    globalThis.context = new EditContext({
+      text: 'abc', selectionStart: 3, selectionEnd: 3
+    });
+    context.addEventListener('textupdate', event => events.push(event));
+    context.updateText(1, 2, 'XY');
+    context.updateSelection(3, 3);
+    context.text === 'aXYc' && context.selectionStart === 3 &&
+      context.selectionEnd === 3 && events.length === 0
   )");
 }
 

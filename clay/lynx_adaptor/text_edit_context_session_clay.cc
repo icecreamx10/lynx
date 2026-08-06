@@ -247,13 +247,16 @@ void TextEditContextSessionClay::PushNativeState(
           snapshot.has_composition ? snapshot.composition.base() : 0,
           snapshot.has_composition ? snapshot.composition.extent() : 0),
       snapshot.has_composition, clay::Affinity::kDownstream);
-  text_input_controller_->SetEditingState(value);
   if (restart_input && active_) {
     text_input_controller_->ClearClient();
     text_input_controller_->SetClient(host_->id(),
                                       clay::KeyboardAction::kMultiLine,
                                       clay::KeyboardInputType::kClassText);
   }
+  // Reconnecting the platform input client creates a fresh native model on
+  // macOS. Restore the snapshot after the reconnect so the first key replaces
+  // the EditContext selection instead of an empty native buffer.
+  text_input_controller_->SetEditingState(value);
 
   if (session_ && query_caret_geometry) {
     const auto rects = session_->SelectionRects(

@@ -4,8 +4,18 @@
 
 import { CSSProperties } from '../common';
 import { Animation, AnimationOptions } from './animation'
+import { EditContext } from './edit-context';
 
 export interface Element {
+  /** The frontend-owned editing state associated with this text host. */
+  editContext: EditContext | null;
+
+  /** Activate this element's EditContext and request platform keyboard input. */
+  focus(): void;
+
+  /** Deactivate this element's EditContext. */
+  blur(): void;
+
   /**
    * Set an attribute.
    * @param attributeName The name of the attribute.

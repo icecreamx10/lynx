@@ -5,4 +5,5 @@
 export * from './lynx';
 export * from './element';
 export * from './events';
-export * from './animation'
+export * from './animation';
+export * from './edit-context';

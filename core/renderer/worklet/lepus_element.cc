@@ -637,11 +637,37 @@ bool LepusElement::DispatchEditingEvent(const std::string& name,
   params->SetValue("cancelable", cancelable);
   params->SetValue("defaultPrevented", false);
 
-  auto result = FireElementWorklet(
-      element->ParentComponentIdString(), element->ParentComponentEntryName(),
-      tasm_, found->second->lepus_function(), found->second->lepus_script(),
-      lepus::Value(std::move(params)), handler, element_id_,
-      tasm::EventType::kCustom);
+  tasm::EventResult result = tasm::EventResult::kDefault;
+  if (tasm_->EnableFiberArch()) {
+    auto* context = found->second->lepus_context();
+    if (!context || found->second->lepus_object().IsEmpty()) {
+      LOGE("DispatchEditingEvent skipped: fiber worklet is unavailable.");
+      return true;
+    }
+
+    constexpr const static char kRunWorklet[] = "runWorklet";
+    BASE_STATIC_STRING_DECL(kRunWorkletSource, "source");
+    BASE_STATIC_STRING_DECL(kEventReturnResult, "eventReturnResult");
+    auto arguments = lepus::CArray::Create();
+    arguments->push_back(lepus::Value(std::move(params)));
+    auto options = lepus::Dictionary::Create();
+    options->SetValue(kRunWorkletSource,
+                      static_cast<int>(tasm::RunWorkletType::kEvents));
+    auto call_result = context->CallClosure(
+        context->GetGlobalData(BASE_STATIC_STRING(kRunWorklet)),
+        found->second->lepus_object(), lepus::Value(std::move(arguments)),
+        lepus::Value(std::move(options)));
+    if (call_result.IsObject()) {
+      result = static_cast<tasm::EventResult>(
+          call_result.GetProperty(kEventReturnResult).Number());
+    }
+  } else {
+    result = FireElementWorklet(
+        element->ParentComponentIdString(), element->ParentComponentEntryName(),
+        tasm_, found->second->lepus_function(), found->second->lepus_script(),
+        lepus::Value(std::move(params)), handler, element_id_,
+        tasm::EventType::kCustom);
+  }
   return (static_cast<int>(result) & kPreventDefaultBit) == 0;
 }
 

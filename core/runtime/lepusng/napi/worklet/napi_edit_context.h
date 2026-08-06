@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/renderer/editing/editing_host_controller.h"
@@ -22,6 +23,17 @@ namespace lynx::worklet {
 // validate that its element is a live <text> before calling AssociateElement.
 class NapiEditContext : public binding::NapiBridge {
  public:
+  enum class FrontendBridgeOperation : uint8_t {
+    kAttach,
+    kDetach,
+    kFocus,
+    kBlur,
+    kGet,
+  };
+  using FrontendBridgeDispatcher = Napi::Value (*)(NapiEditContext*,
+                                                   FrontendBridgeOperation,
+                                                   const Napi::CallbackInfo&);
+
   explicit NapiEditContext(const Napi::CallbackInfo& info);
   ~NapiEditContext() override;
 
@@ -31,6 +43,7 @@ class NapiEditContext : public binding::NapiBridge {
 
   static bool IsInstance(const Napi::Value& value);
   static NapiEditContext* Unwrap(const Napi::Value& value);
+  static void SetFrontendBridgeDispatcher(FrontendBridgeDispatcher dispatcher);
 
   std::shared_ptr<editing::EditingHostController> controller() const {
     return controller_;
@@ -42,6 +55,14 @@ class NapiEditContext : public binding::NapiBridge {
   bool AssociateElement(int64_t host_id, const Napi::Object& element);
   void DetachElement(int64_t host_id);
   void DetachElement();
+  std::optional<int64_t> attached_host_id() const { return attached_host_id_; }
+  Napi::Object ObjectForFrontend() { return NapiObject(); }
+  const std::shared_ptr<void>& frontend_bridge_state() const {
+    return frontend_bridge_state_;
+  }
+  void SetFrontendBridgeState(std::shared_ptr<void> state) {
+    frontend_bridge_state_ = std::move(state);
+  }
 
   // Public native event entry point used by EditContextModel and association
   // glue. It must be called on the facade's UI/N-API thread.
@@ -55,6 +76,12 @@ class NapiEditContext : public binding::NapiBridge {
   Napi::Value UpdateSelection(const Napi::CallbackInfo& info);
   Napi::Value AddEventListener(const Napi::CallbackInfo& info);
   Napi::Value RemoveEventListener(const Napi::CallbackInfo& info);
+  Napi::Value AttachElementForFrontend(const Napi::CallbackInfo& info);
+  Napi::Value DetachElementForFrontend(const Napi::CallbackInfo& info);
+  Napi::Value FocusElementForFrontend(const Napi::CallbackInfo& info);
+  Napi::Value BlurElementForFrontend(const Napi::CallbackInfo& info);
+  static Napi::Value GetElementContextForFrontend(
+      const Napi::CallbackInfo& info);
 
  private:
   static const char* EventTypeName(editing::EditContextEventType type);
@@ -64,8 +91,10 @@ class NapiEditContext : public binding::NapiBridge {
   std::shared_ptr<editing::EditingHostController> controller_;
   std::optional<int64_t> attached_host_id_;
   Napi::ObjectReference attached_element_;
+  std::shared_ptr<void> frontend_bridge_state_;
   std::unordered_map<std::string, std::vector<Napi::FunctionReference>>
       event_listeners_;
+  static thread_local FrontendBridgeDispatcher frontend_bridge_dispatcher_;
 };
 
 }  // namespace lynx::worklet

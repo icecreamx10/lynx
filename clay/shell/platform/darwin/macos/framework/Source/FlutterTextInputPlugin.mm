@@ -602,6 +602,26 @@ static char markerKey;
   // insertText with '\t'.
 }
 
+- (void)deleteBackward:(id)sender {
+  if (_activeModel == nullptr) {
+    return;
+  }
+
+  if (_activeModel->Backspace()) {
+    [self updateEditState];
+  }
+}
+
+- (void)deleteForward:(id)sender {
+  if (_activeModel == nullptr) {
+    return;
+  }
+
+  if (_activeModel->Delete()) {
+    [self updateEditState];
+  }
+}
+
 - (void)insertText:(id)string replacementRange:(NSRange)range {
   if (_activeModel == nullptr) {
     return;

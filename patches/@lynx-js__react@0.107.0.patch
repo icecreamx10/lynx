@@ -1,0 +1,81 @@
+--- a/worklet-runtime/lib/api/element.js
++++ b/worklet-runtime/lib/api/element.js
+@@ -15,6 +15,31 @@
+             },
+         });
+     }
++    get editContext() {
++        const hostId = __GetElementUniqueID(this.element);
++        return globalThis.__GetEditContextForElement?.(hostId) ?? null;
++    }
++    set editContext(value) {
++        const hostId = __GetElementUniqueID(this.element);
++        const current = globalThis.__GetEditContextForElement?.(hostId) ?? null;
++        if (current === value) {
++            return;
++        }
++        if (value === null || value === undefined) {
++            current?.__detachElement(hostId);
++            return;
++        }
++        if (typeof value.__attachElement !== 'function') {
++            throw new TypeError('editContext must be an EditContext or null');
++        }
++        value.__attachElement(hostId, this);
++    }
++    focus() {
++        this.editContext?.__focus();
++    }
++    blur() {
++        this.editContext?.__blur();
++    }
+     setAttribute(name, value) {
+         __SetAttribute(this.element, name, value);
+         this.flushElementTree();
+--- a/worklet-runtime/lib/api/element.d.ts
++++ b/worklet-runtime/lib/api/element.d.ts
+@@ -2,6 +2,10 @@
+     private static willFlush;
+     private readonly element;
+     constructor(element: ElementNode);
++    get editContext(): any | null;
++    set editContext(value: any | null);
++    focus(): void;
++    blur(): void;
+     setAttribute(name: string, value: any): void;
+     setStyleProperty(name: string, value: string): void;
+     setStyleProperties(styles: Record<string, string>): void;
+--- a/worklet-runtime/dist/main.js
++++ b/worklet-runtime/dist/main.js
+@@ -15,6 +15,31 @@
+         }
+       });
+     }
++    get editContext() {
++      const hostId = __GetElementUniqueID(this.element);
++      return globalThis.__GetEditContextForElement?.(hostId) ?? null;
++    }
++    set editContext(value) {
++      const hostId = __GetElementUniqueID(this.element);
++      const current = globalThis.__GetEditContextForElement?.(hostId) ?? null;
++      if (current === value) {
++        return;
++      }
++      if (value === null || value === void 0) {
++        current?.__detachElement(hostId);
++        return;
++      }
++      if (typeof value.__attachElement !== "function") {
++        throw new TypeError("editContext must be an EditContext or null");
++      }
++      value.__attachElement(hostId, this);
++    }
++    focus() {
++      this.editContext?.__focus();
++    }
++    blur() {
++      this.editContext?.__blur();
++    }
+     setAttribute(name, value) {
+       __SetAttribute(this.element, name, value);
+       this.flushElementTree();
