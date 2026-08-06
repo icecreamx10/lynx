@@ -120,7 +120,8 @@ final class TextEditContextSessionBridge implements TextEditContextSession {
       int rangeEnd, long stateRevision, long projectionRevision) {
     AndroidText view;
     if (session != null && (view = session.mHostView.get()) != null) {
-      view.post(view::refreshTextEditContextGeometry);
+      final AndroidText hostView = view;
+      view.post(() -> hostView.refreshTextEditContextGeometry(rangeStart, rangeEnd));
     }
   }
 
@@ -176,12 +177,26 @@ final class TextEditContextSessionBridge implements TextEditContextSession {
 
   @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
   public boolean refreshLayout(AndroidText hostView) {
+    TextEditContextSnapshot snapshot = snapshot();
+    int requestedStart = snapshot == null
+        ? -1
+        : Math.min(snapshot.selectionBase, snapshot.selectionExtent);
+    int requestedEnd = snapshot == null
+        ? -1
+        : Math.max(snapshot.selectionBase, snapshot.selectionExtent);
+    return refreshLayout(hostView, requestedStart, requestedEnd);
+  }
+
+  @Override // com.lynx.tasm.behavior.ui.text.TextEditContextSession
+  public boolean refreshLayout(AndroidText hostView, int requestedStart, int requestedEnd) {
     TextEditContextLayoutSnapshot projection;
     TextEditContextLayoutData layout;
     long nativePtr = this.mNativeSessionPtr;
     return (nativePtr == 0 || hostView == null
                || (projection = nativeGetProjectionSnapshot(nativePtr)) == null
-               || (layout = TextEditContextLayoutCollector.collect(hostView, projection)) == null
+               || (layout = TextEditContextLayoutCollector.collect(
+                       hostView, projection, requestedStart, requestedEnd))
+                   == null
                || !nativeUpdateGeometry(nativePtr, layout.stateRevision, layout.projectionRevision,
                    layout.projectionLength, layout.coverageStart, layout.coverageEnd,
                    layout.controlBounds, layout.projectionOffsets, layout.segmentIds,

@@ -17,6 +17,7 @@
 #include "core/renderer/css/css_decoder.h"
 #include "core/renderer/css/css_property.h"
 #include "core/renderer/dom/element.h"
+#include "core/renderer/dom/element_manager.h"
 #include "core/renderer/dom/vdom/radon/radon_page.h"
 #include "core/renderer/editing/editing_host_registry.h"
 #include "core/renderer/template_entry.h"
@@ -713,6 +714,7 @@ void LepusElement::SetEditContext(const Napi::Value& value,
         DispatchEditingEvent("selectionchange", lepus::Value(std::move(detail)),
                              false);
       });
+  element->element_manager()->SynchronizeEditingHostProjection(element_id_);
 }
 
 Napi::Value LepusElement::ScrollBy(float width, float height) {

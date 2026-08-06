@@ -10,9 +10,12 @@
 #include "core/public/layout_node_manager.h"
 #include "core/renderer/dom/element.h"
 #include "core/renderer/dom/element_manager.h"
+#include "core/renderer/editing/editing_projection.h"
 
 namespace lynx {
 namespace tasm {
+
+editing::EditingProjection BuildEditingProjection(Element* host);
 
 class ElementLayoutNodeManager : public LayoutNodeManager {
  public:

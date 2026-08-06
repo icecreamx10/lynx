@@ -7,6 +7,7 @@
 
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,7 +22,8 @@
 namespace lynx {
 namespace editing {
 class EditingHostRegistry;
-}
+class EditingPlatformSession;
+}  // namespace editing
 namespace tasm {
 
 class TextEditContextSessionClay;
@@ -155,6 +157,8 @@ class PaintingContextClay : public PaintingCtxPlatformImpl,
   void Enqueue(base::closure&& op);
 
  private:
+  void RefreshEditContextSessions();
+
   std::shared_ptr<shell::UIOperationQueueInterface> ui_operation_queue_ref_;
   static void SetAttribute(clay::ViewContext* view_context, int sign,
                            PropBundle* attributes, bool init);
@@ -182,6 +186,9 @@ class PaintingContextClay : public PaintingCtxPlatformImpl,
   uint64_t editing_host_observer_id_{0};
   std::unordered_map<int64_t, std::unique_ptr<TextEditContextSessionClay>>
       edit_context_sessions_;
+  std::unordered_map<int64_t, std::shared_ptr<editing::EditingPlatformSession>>
+      pending_edit_context_sessions_;
+  std::optional<int64_t> active_edit_context_host_id_;
 
   int32_t instance_id_ = 0;
 

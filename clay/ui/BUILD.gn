@@ -237,5 +237,14 @@ if (enable_unittests) {
       "../testing:skia",
       "//third_party/skia/modules/skparagraph:skparagraph",
     ]
+
+    # Desktop/headless tests do not provide a platform compositor embedder, so
+    # link the production fallback implementations explicitly.
+    if (is_mac || is_headless) {
+      public_deps += [
+        "../shell/common:platform_overlay_service_fallback",
+        "../shell/common:presenter_service_fallback",
+      ]
+    }
   }
 }

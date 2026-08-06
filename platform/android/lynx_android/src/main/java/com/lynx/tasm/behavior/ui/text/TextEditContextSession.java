@@ -19,6 +19,10 @@ interface TextEditContextSession {
     return false;
   }
 
+  default boolean refreshLayout(AndroidText hostView, int requestedStart, int requestedEnd) {
+    return refreshLayout(hostView);
+  }
+
   default float[] selectionRects(int selectionBase, int selectionExtent) {
     return new float[0];
   }

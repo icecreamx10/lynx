@@ -6,18 +6,14 @@
 #import <objc/runtime.h>
 
 #import "LynxEditContextInputClient.h"
+#import "LynxEditContextGeometryCollector.h"
+#import <Lynx/LynxBaseTextShadowNode.h>
+#import <Lynx/LynxUI.h>
+#import <Lynx/LynxUIContext.h>
+#import <Lynx/LynxUIOwner.h>
+#import <Lynx/LynxUIText.h>
 
-#include <algorithm>
 #include <utility>
-
-// Keep this adapter independent from renderer/event internals. These are the
-// existing public renderer accessors needed to measure mounted glyphs.
-@interface LynxTextRenderer : NSObject
-@property(nonatomic, readonly) NSLayoutManager *layoutManager;
-@property(nonatomic, readonly) NSTextStorage *textStorage;
-@property(nonatomic, readonly) CGFloat textContentOffsetX;
-- (void)ensureTextRenderLayout;
-@end
 
 @protocol LynxEditContextUIContextAccess <NSObject>
 @property(nonatomic, readonly, nullable) UIView *rootView;
@@ -27,32 +23,8 @@
 @property(nonatomic, readonly, nullable) id<LynxEditContextUIContextAccess> context;
 @end
 
-namespace {
-
-using lynx::editing::EditingBlockBoundaryEdge;
-using lynx::editing::EditingLayoutUnitFlag;
-using lynx::editing::EditingProjectionSnapshot;
-using lynx::editing::EditingSegment;
-using lynx::editing::EditingSegmentKind;
-
-EditingLayoutUnitFlag LynxAddFlag(EditingLayoutUnitFlag flags,
-                                  EditingLayoutUnitFlag added) {
-  return static_cast<EditingLayoutUnitFlag>(static_cast<uint8_t>(flags) |
-                                            static_cast<uint8_t>(added));
-}
-
-const EditingSegment *LynxSegmentAtOffset(const EditingProjectionSnapshot &projection,
-                                          size_t offset) {
-  auto found = std::find_if(projection.segments.begin(), projection.segments.end(),
-                            [offset](const EditingSegment &segment) {
-                              return segment.start <= offset && offset < segment.end;
-                            });
-  return found == projection.segments.end() ? nullptr : &*found;
-}
-
-}  // namespace
-
-@interface LynxTextView (EditContextPrivate) <LynxEditContextGeometrySource>
+@interface LynxTextView (EditContextPrivate) <LynxEditContextGeometrySource,
+                                                  LynxEditContextGeometryResolver>
 @property(nonatomic, strong, nullable) LynxEditContextInputClient *lynx_editContextClient;
 @end
 
@@ -113,84 +85,117 @@ static void *kLynxEditContextClientKey = &kLynxEditContextClientKey;
 - (BOOL)editContextInputClient:(LynxEditContextInputClient *)client
        collectGeometryForRange:(NSRange)requestedRange
                  stateRevision:(uint64_t)stateRevision
-                    projection:(const EditingProjectionSnapshot &)projection
+                    projection:(const lynx::editing::EditingProjectionSnapshot &)projection
                       snapshot:(lynx::editing::EditingGeometrySnapshot *)snapshot {
-  LynxTextRenderer *renderer = self.textRenderer;
-  if (!snapshot || !renderer || projection.length != renderer.textStorage.length ||
-      requestedRange.location == NSNotFound || requestedRange.location > projection.length ||
-      requestedRange.length > projection.length - requestedRange.location) {
+  CGRect controlRect = [self convertRect:self.bounds toView:client.coordinateSpaceView];
+  return LynxCollectEditContextGeometry(self, controlRect, requestedRange, stateRevision,
+                                        projection, snapshot);
+}
+
+- (LynxUI *)editContextUIForID:(int64_t)nodeID {
+  if (nodeID < NSIntegerMin || nodeID > NSIntegerMax || !self.ui) {
+    return nil;
+  }
+  if (self.ui.sign == (NSInteger)nodeID) {
+    return self.ui;
+  }
+  return [self.ui.context.uiOwner findUIBySign:(NSInteger)nodeID];
+}
+
+- (BOOL)editContextMeasureTextSegment:(int64_t)segmentID
+                              ownerID:(int64_t)ownerID
+                          localOffset:(NSUInteger)localOffset
+                               bounds:(CGRect *)bounds
+                          rightToLeft:(BOOL *)rightToLeft {
+  LynxUI *owner = [self editContextUIForID:ownerID];
+  LynxTextView *textView = [owner isKindOfClass:LynxUIText.class] &&
+                                   [owner.view isKindOfClass:LynxTextView.class]
+                               ? (LynxTextView *)owner.view
+                               : nil;
+  if (!textView && self.ui.sign == ownerID) {
+    textView = self;
+  }
+  LynxTextRenderer *renderer = textView.textRenderer;
+  if (!renderer) {
     return NO;
   }
 
+  NSUInteger characterOffset = localOffset;
+  if (segmentID != ownerID) {
+    // Inline text descendants are virtual on Darwin. ownerID selects the
+    // renderer that carries the glyphs, while segmentID selects the attributed
+    // run. Local offsets restart at zero for every segment.
+    __block NSUInteger ownerLocalOffset = 0;
+    __block NSUInteger matchedOffset = NSNotFound;
+    [renderer.textStorage
+        enumerateAttribute:LynxInlineTextShadowNodeSignKey
+                   inRange:NSMakeRange(0, renderer.textStorage.length)
+                   options:0
+                usingBlock:^(id value, NSRange range, BOOL *stop) {
+                  NSInteger attributedSegment = value ? [value sign] : ownerID;
+                  if (attributedSegment != segmentID || matchedOffset != NSNotFound) {
+                    return;
+                  }
+                  if (localOffset < ownerLocalOffset + range.length) {
+                    matchedOffset = range.location + localOffset - ownerLocalOffset;
+                    *stop = YES;
+                    return;
+                  }
+                  ownerLocalOffset += range.length;
+                }];
+    if (matchedOffset != NSNotFound) {
+      characterOffset = matchedOffset;
+    }
+  }
+  if (!renderer || characterOffset >= renderer.textStorage.length) {
+    return NO;
+  }
   [renderer ensureTextRenderLayout];
   NSLayoutManager *layoutManager = renderer.layoutManager;
   NSTextContainer *textContainer = layoutManager.textContainers.firstObject;
   if (!textContainer) {
     return NO;
   }
-
-  CGRect controlRect = [self convertRect:self.bounds toView:client.coordinateSpaceView];
-  snapshot->state_revision = stateRevision;
-  snapshot->projection_revision = projection.revision;
-  snapshot->projection_length = projection.length;
-  snapshot->coverage = lynx::editing::TextRange(requestedRange.location,
-                                                NSMaxRange(requestedRange));
-  snapshot->control_bounds = {static_cast<float>(controlRect.origin.x),
-                              static_cast<float>(controlRect.origin.y),
-                              static_cast<float>(controlRect.size.width),
-                              static_cast<float>(controlRect.size.height)};
-  snapshot->units.clear();
-  snapshot->units.reserve(requestedRange.length);
-
-  const CGPoint textOrigin =
-      CGPointMake(self.padding.left + self.border.left + renderer.textContentOffsetX,
-                  self.padding.top + self.border.top);
-  for (NSUInteger offset = requestedRange.location; offset < NSMaxRange(requestedRange);
-       ++offset) {
-    const EditingSegment *segment = LynxSegmentAtOffset(projection, offset);
-    if (!segment) {
-      return NO;
-    }
-    NSRange glyphRange = [layoutManager glyphRangeForCharacterRange:NSMakeRange(offset, 1)
-                                              actualCharacterRange:nil];
-    if (glyphRange.length == 0) {
-      return NO;
-    }
-    CGRect localBounds = [layoutManager boundingRectForGlyphRange:glyphRange
-                                                  inTextContainer:textContainer];
-    localBounds = CGRectOffset(localBounds, textOrigin.x, textOrigin.y);
-    CGRect viewportBounds = [self convertRect:localBounds toView:client.coordinateSpaceView];
-
-    EditingLayoutUnitFlag flags = EditingLayoutUnitFlag::kNone;
-    if (segment->kind == EditingSegmentKind::kAtomicObject) {
-      flags = LynxAddFlag(flags, EditingLayoutUnitFlag::kAtomic);
-    } else if (segment->kind == EditingSegmentKind::kBlockBoundary) {
-      flags = LynxAddFlag(flags, EditingLayoutUnitFlag::kBlock);
-    }
-    NSParagraphStyle *paragraph =
-        [renderer.textStorage attribute:NSParagraphStyleAttributeName
-                                atIndex:offset
-                         effectiveRange:nil];
-    if (paragraph.baseWritingDirection == NSWritingDirectionRightToLeft) {
-      flags = LynxAddFlag(flags, EditingLayoutUnitFlag::kHasDirection);
-      flags = LynxAddFlag(flags, EditingLayoutUnitFlag::kRightToLeft);
-    }
-
-    lynx::editing::EditingLayoutUnit unit;
-    unit.projection_offset = offset;
-    unit.segment_id = segment->segment_id;
-    unit.owner_id = segment->owner_id;
-    unit.local_start = offset - segment->start;
-    unit.local_end = unit.local_start + 1;
-    unit.bounds = {static_cast<float>(viewportBounds.origin.x),
-                   static_cast<float>(viewportBounds.origin.y),
-                   static_cast<float>(viewportBounds.size.width),
-                   static_cast<float>(viewportBounds.size.height)};
-    unit.flags = flags;
-    unit.boundary_edge = segment->boundary_edge;
-    snapshot->units.push_back(unit);
+  NSRange glyphRange = [layoutManager glyphRangeForCharacterRange:NSMakeRange(characterOffset, 1)
+                                            actualCharacterRange:nil];
+  if (glyphRange.length == 0) {
+    return NO;
   }
+  CGRect localBounds = [layoutManager boundingRectForGlyphRange:glyphRange
+                                                inTextContainer:textContainer];
+  localBounds = CGRectOffset(localBounds,
+                             textView.padding.left + textView.border.left +
+                                 renderer.textContentOffsetX,
+                             textView.padding.top + textView.border.top);
+  *bounds = [textView convertRect:localBounds
+                          toView:self.lynx_editContextClient.coordinateSpaceView];
+  NSParagraphStyle *paragraph =
+      [renderer.textStorage attribute:NSParagraphStyleAttributeName
+                              atIndex:characterOffset
+                       effectiveRange:nil];
+  *rightToLeft = paragraph.baseWritingDirection == NSWritingDirectionRightToLeft;
   return YES;
+}
+
+- (BOOL)editContextMeasureNode:(int64_t)nodeID bounds:(CGRect *)bounds {
+  LynxUI *node = [self editContextUIForID:nodeID];
+  if (node && node.view && (node.view.superview || node.view == self)) {
+    *bounds = [node.view convertRect:node.view.bounds
+                              toView:self.lynx_editContextClient.coordinateSpaceView];
+    return YES;
+  }
+  for (LynxTextAttachmentInfo *attachment in self.textRenderer.attachments) {
+    if (attachment.sign != nodeID || CGRectIsEmpty(attachment.frame)) {
+      continue;
+    }
+    CGRect localBounds =
+        CGRectOffset(attachment.frame, self.padding.left + self.border.left,
+                     self.padding.top + self.border.top);
+    *bounds = [self convertRect:localBounds
+                        toView:self.lynx_editContextClient.coordinateSpaceView];
+    return YES;
+  }
+  return NO;
 }
 
 @end

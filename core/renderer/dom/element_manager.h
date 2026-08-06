@@ -284,6 +284,8 @@ class ElementManager : public LayoutScheduler::LayoutSchedulerImpl {
   editing::EditingHostRegistry *editing_host_registry() {
     return editing_host_registry_.get();
   }
+  void SynchronizeEditingHostProjection(int64_t host_id);
+  void SynchronizeEditingHostProjections();
   inline Catalyzer *catalyzer() { return catalyzer_.get(); }
   inline NodeManager *node_manager() { return node_manager_.get(); }
 

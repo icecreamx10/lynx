@@ -118,6 +118,7 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
   private static WeakReference<AndroidText> sActiveTextEditContextHost;
 
   private TextEditContextSession mTextEditContextSession;
+  private TextEditContextInputConnection mTextEditContextInputConnection;
   private final ArrayList<RectF> mEditContextSelectionRects = new ArrayList<>();
   private final Paint mEditContextSelectionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
   private final Paint mEditContextCaretPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -196,6 +197,7 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
       }
     }
     mTextEditContextSession = session;
+    mTextEditContextInputConnection = null;
     if (previousSession instanceof TextEditContextSessionBridge) {
       ((TextEditContextSessionBridge) previousSession).invalidate();
     }
@@ -261,7 +263,8 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
     outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI;
     outAttrs.initialSelStart = snapshot.selectionBase;
     outAttrs.initialSelEnd = snapshot.selectionExtent;
-    return new TextEditContextInputConnection(this, session);
+    mTextEditContextInputConnection = new TextEditContextInputConnection(this, session);
+    return mTextEditContextInputConnection;
   }
 
   @Override
@@ -726,7 +729,16 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
   void refreshTextEditContextGeometry() {
     TextEditContextSession session = mTextEditContextSession;
     TextEditContextSnapshot state = session == null ? null : session.snapshot();
-    if (session == null || state == null || !session.isActive() || !session.refreshLayout(this)) {
+    int start = state == null ? -1 : Math.min(state.selectionBase, state.selectionExtent);
+    int end = state == null ? -1 : Math.max(state.selectionBase, state.selectionExtent);
+    refreshTextEditContextGeometry(start, end);
+  }
+
+  void refreshTextEditContextGeometry(int requestedStart, int requestedEnd) {
+    TextEditContextSession session = mTextEditContextSession;
+    TextEditContextSnapshot state = session == null ? null : session.snapshot();
+    if (session == null || state == null || !session.isActive()
+        || !session.refreshLayout(this, requestedStart, requestedEnd)) {
       mEditContextSelectionRects.clear();
     } else {
       updateTextEditContextSelection(state);
@@ -740,8 +752,12 @@ public class AndroidText extends AndroidView implements ActionMode.Callback {
         || (state = source.snapshot()) == null || state.revision < callbackState.revision) {
       return;
     }
-    refreshTextEditContextGeometry();
-    notifyTextEditContextSelection(state);
+    if (mTextEditContextInputConnection != null) {
+      mTextEditContextInputConnection.onSessionStateChanged(state);
+    } else {
+      refreshTextEditContextGeometry();
+      notifyTextEditContextSelection(state);
+    }
     invalidate();
   }
 

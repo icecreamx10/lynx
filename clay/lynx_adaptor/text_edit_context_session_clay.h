@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/include/fml/memory/weak_ptr.h"
+#include "clay/lynx_adaptor/text_edit_context_geometry_clay.h"
 #include "clay/ui/component/editable/text_input_controller.h"
 #include "core/renderer/editing/editing_platform_contract.h"
 
@@ -35,6 +36,7 @@ class TextEditContextSessionClay final
 
   void Activate();
   void Deactivate();
+  void ViewTreeDidChange();
 
   // EditingPlatformDelegate
   void OnStateChanged(const editing::EditingStateUpdate& update) override;
@@ -50,20 +52,18 @@ class TextEditContextSessionClay final
   void PerformAction() override;
 
  private:
-  struct MeasuredUnit {
-    editing::EditingLayoutUnit unit;
-    bool available{false};
-  };
-
   void ApplySnapshot(const editing::EditingStateSnapshot& snapshot,
                      bool restart_input, bool refresh_geometry);
   void PushNativeState(const editing::EditingStateSnapshot& snapshot,
                        bool restart_input, bool query_caret_geometry);
-  void RefreshGeometry(editing::TextRange requested,
-                       uint64_t state_revision,
-                       uint64_t projection_revision);
-  std::vector<MeasuredUnit> BuildLayoutUnits(
+  void RefreshGeometry(
+      editing::TextRange requested, uint64_t state_revision,
+      uint64_t projection_revision,
+      std::optional<editing::EditingLayoutPoint> point = std::nullopt);
+  std::vector<ClayEditingMeasuredUnit> BuildLayoutUnits(
       const editing::EditingProjectionSnapshot& projection) const;
+  void RefreshTextPlacements(
+      const editing::EditingProjectionSnapshot& projection);
   void RefreshSelectionCallbacks(
       const editing::EditingProjectionSnapshot& projection);
   void UpdateRenderedSelection(
@@ -72,13 +72,14 @@ class TextEditContextSessionClay final
   void HandleViewSelectionChanged(int64_t owner_id, int start, int end);
   void HandlePointerSelection(const clay::FloatPoint& point, bool extend);
   std::optional<size_t> MapViewOffsetToProjection(int64_t owner_id,
-                                                 size_t offset) const;
+                                                  size_t offset) const;
 
   clay::TextView* host_{nullptr};
   std::shared_ptr<editing::EditingPlatformSession> session_;
   std::unique_ptr<clay::TextInputController> text_input_controller_;
   editing::EditingStateSnapshot snapshot_;
   editing::EditingProjectionSnapshot projection_;
+  std::vector<ClayEditingTextPlacement> text_placements_;
   std::unordered_set<int64_t> callback_owner_ids_;
   std::optional<size_t> pointer_anchor_;
   bool applying_snapshot_{false};

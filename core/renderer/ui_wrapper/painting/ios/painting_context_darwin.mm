@@ -336,6 +336,18 @@ void PaintingContextDarwin::SetEditingHostRegistry(editing::EditingHostRegistry*
   if (editing_host_registry_ && editing_host_observer_id_ != 0) {
     editing_host_registry_->RemoveLifecycleObserver(editing_host_observer_id_);
   }
+  if (!editing_host_ids_.empty() && queue_) {
+    std::vector<int64_t> detached_host_ids(editing_host_ids_.begin(), editing_host_ids_.end());
+    Enqueue([owner = uiOwner_, host_ids = std::move(detached_host_ids)]() {
+      for (int64_t host_id : host_ids) {
+        LynxUI* ui = [owner findUIBySign:static_cast<NSInteger>(host_id)];
+        if ([ui.view isKindOfClass:[LynxTextView class]]) {
+          [(LynxTextView*)ui.view detachEditContext];
+        }
+      }
+    });
+  }
+  editing_host_ids_.clear();
   editing_host_registry_ = registry;
   editing_host_observer_id_ = 0;
   if (!registry) {
@@ -347,9 +359,12 @@ void PaintingContextDarwin::SetEditingHostRegistry(editing::EditingHostRegistry*
     std::shared_ptr<editing::EditingPlatformSession> session;
     if (event == editing::EditingHostLifecycleEvent::kAttached) {
       session = registry->Lookup(host_id);
+      editing_host_ids_.insert(host_id);
+    } else if (event == editing::EditingHostLifecycleEvent::kDetached) {
+      editing_host_ids_.erase(host_id);
     }
     Enqueue([owner = uiOwner_, host_id, event, session = std::move(session)]() mutable {
-      LynxUI* ui = [owner findUIBySign:static_cast<int>(host_id)];
+      LynxUI* ui = [owner findUIBySign:static_cast<NSInteger>(host_id)];
       UIView* view = ui.view;
       if (![view isKindOfClass:[LynxTextView class]]) {
         return;

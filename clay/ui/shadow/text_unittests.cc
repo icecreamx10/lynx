@@ -8,6 +8,9 @@
 #include "clay/public/layout_delegate.h"
 #include "clay/ui/common/measure_constraint.h"
 #include "clay/ui/component/text/raw_text_view.h"
+#include "clay/ui/component/text/text_paragraph_builder.h"
+#include "clay/ui/rendering/text/render_inline_text.h"
+#include "clay/ui/rendering/text/render_text.h"
 #include "clay/ui/shadow/inline_text_shadow_node.h"
 #include "clay/ui/shadow/inline_truncation_shadow_node.h"
 #include "clay/ui/shadow/inline_view_shadow_node.h"
@@ -238,6 +241,75 @@ TEST_F_UI(TextTest, VerticalAlign) {
   text_shadow_node_->Measure(constraint);
   auto baseline_shift = inline_text_shadow_node_->text_style_->baseline_shift;
   EXPECT_EQ(baseline_shift, 20);
+}
+
+#if defined(CLAY_ENABLE_TTTEXT)
+TEST_F_UI(TextTest, RectForRangeOnLaterLineUsesParagraphCoordinates) {
+  TextStyle style;
+  style.font_size = 18.f;
+  auto builder = std::make_unique<TextParagraphBuilder>(true, style);
+  builder->PushStyle(style);
+  builder->AddText(u"prefix\nmarked");
+  builder->Pop();
+  auto paragraph = Build(std::move(builder));
+  paragraph->Layout(1000.f);
+
+  const auto& lines = paragraph->GetLineMetrics();
+  ASSERT_GE(lines.size(), 2u);
+  const auto second_line_start = lines[1].start_index;
+  auto boxes =
+      paragraph->GetRectsForRange(second_line_start, lines[1].end_index,
+                                  txt::Paragraph::RectHeightStyle::kTight,
+                                  txt::Paragraph::RectWidthStyle::kTight);
+
+  ASSERT_EQ(boxes.size(), 1u);
+  EXPECT_NEAR(boxes.front().rect.Left(), 0.f, 0.01f);
+  EXPECT_GT(boxes.front().rect.Width(), 0.f);
+}
+#endif
+
+TEST_F_UI(TextTest, InlineTextPaintOffsetTracksRootLayoutChanges) {
+  TextStyle style;
+  style.font_size = 18.f;
+  auto builder = std::make_unique<TextParagraphBuilder>(true, style);
+  builder->PushStyle(style);
+  builder->AddText(u"center");
+  builder->Pop();
+  auto paragraph = Build(std::move(builder));
+  paragraph->Layout(1000.f);
+  const float paragraph_width = paragraph->GetLongestLine();
+
+  RenderText root;
+  root.SetParagraph(paragraph.get(), u"center");
+  root.SetWidth(paragraph_width + 120.f);
+  root.SetHeight(100.f);
+  root.SetPaddingLeft(10.f);
+  root.SetPaddingRight(10.f);
+  root.SetPaddingTop(8.f);
+  root.SetTextPaintAlign(TextAlignment::kCenter);
+  root.SetLineSpacingOffset(4.f);
+
+  RenderInlineText inline_text;
+  inline_text.SetParagraphPaintSource(&root);
+  auto offset = inline_text.GetParagraphPaintOffset();
+  EXPECT_NEAR(offset.x(), 60.f, 0.01f);
+  EXPECT_NEAR(offset.y(), 12.f, 0.01f);
+
+  // Layout properties may arrive after text extra-data. The inline renderer
+  // must read the source at paint time instead of retaining the old padding.
+  root.SetPaddingLeft(30.f);
+  root.SetPaddingTop(18.f);
+  offset = inline_text.GetParagraphPaintOffset();
+  EXPECT_NEAR(offset.x(), 70.f, 0.01f);
+  EXPECT_NEAR(offset.y(), 22.f, 0.01f);
+
+  root.SetTextPaintAlign(TextAlignment::kRight);
+  offset = inline_text.GetParagraphPaintOffset();
+  EXPECT_NEAR(offset.x(), 110.f, 0.01f);
+  EXPECT_NEAR(offset.y(), 22.f, 0.01f);
+
+  inline_text.SetParagraphPaintSource(nullptr);
+  EXPECT_EQ(inline_text.GetParagraphPaintOffset(), FloatPoint());
 }
 
 TEST_F_UI(TextTest, AlignInlineViewsToOriginResetsInlineViewState) {

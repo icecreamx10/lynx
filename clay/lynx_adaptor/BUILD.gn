@@ -21,6 +21,18 @@ source_set("resource_loader_embedder") {
   ]
 }
 
+source_set("text_edit_context_geometry_clay") {
+  sources = [
+    "text_edit_context_geometry_clay.cc",
+    "text_edit_context_geometry_clay.h",
+  ]
+  public_configs = [
+    "../../clay:config",
+    "../../core:lynx_public_config",
+  ]
+  public_deps = [ "../../core/renderer/editing:editing" ]
+}
+
 source_set("lynx_adaptor") {
   sources = [
     "base_def.h",
@@ -57,6 +69,7 @@ source_set("lynx_adaptor") {
   ]
 
   public_deps = [
+    ":text_edit_context_geometry_clay",
     "../../core/renderer/editing:editing",
     "../fml:fml",
     "../ui:ui",
@@ -86,6 +99,18 @@ source_set("lynx_adaptor") {
   defines = []
   if (is_mac || is_android || is_ios) {
     defines += [ "TRACE_EVENT_HIDE_MACROS" ]
+  }
+}
+
+if (enable_unittests) {
+  executable("lynx_adaptor_unittests") {
+    testonly = true
+    sources = [ "text_edit_context_geometry_clay_unittest.cc" ]
+    deps = [
+      ":text_edit_context_geometry_clay",
+      "//third_party/googletest:gtest",
+    ]
+    public_configs = [ "../../clay:config" ]
   }
 }
 

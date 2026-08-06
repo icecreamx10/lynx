@@ -5,6 +5,7 @@
 #include "core/renderer/dom/element_manager.h"
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -40,6 +41,7 @@
 #include "core/renderer/dom/fragment/fragment.h"
 #include "core/renderer/dom/vdom/radon/radon_list_base.h"
 #include "core/renderer/editing/editing_host_registry.h"
+#include "core/renderer/editing/editing_host_controller.h"
 #include "core/renderer/events/touch_event_handler.h"
 #include "core/renderer/lynx_env_config.h"
 #include "core/renderer/trace/renderer_trace_event_def.h"
@@ -1740,6 +1742,7 @@ void ElementManager::OnPatchFinishForFiber(
   }
   FirePostMTSRenderTasks();
   element->FlushActionsAsRoot();
+  SynchronizeEditingHostProjections();
   options->list_comp_id_ =
       ResolveTemplateElementRootIdForList(options->list_comp_id_);
   for (auto &list_item_id : options->list_item_ids_) {
@@ -1815,6 +1818,30 @@ void ElementManager::OnPatchFinishForFiber(
   }
 
   DidPatchFinishForFiber();
+}
+
+void ElementManager::SynchronizeEditingHostProjection(int64_t host_id) {
+  if (!editing_host_registry_ ||
+      host_id < std::numeric_limits<int32_t>::min() ||
+      host_id > std::numeric_limits<int32_t>::max()) {
+    return;
+  }
+  auto controller = editing_host_registry_->Lookup(host_id);
+  Element* element = node_manager_->Get(static_cast<int32_t>(host_id));
+  if (!controller || !element || !element->is_text()) {
+    return;
+  }
+  controller->SetProjection(BuildEditingProjection(element),
+                            controller->Snapshot().revision);
+}
+
+void ElementManager::SynchronizeEditingHostProjections() {
+  if (!editing_host_registry_) {
+    return;
+  }
+  for (const int64_t host_id : editing_host_registry_->host_ids()) {
+    SynchronizeEditingHostProjection(host_id);
+  }
 }
 
 void ElementManager::EnqueueLevelOrderTask(

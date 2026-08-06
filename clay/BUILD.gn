@@ -184,6 +184,7 @@ group("unittests") {
       "flow:flow_unittests",
       "gfx:gfx_unittests",
       "memory:memory_unittests",
+      "lynx_adaptor:lynx_adaptor_unittests",
       "testing:testing_unittests",
       "third_party/txt:txt_unittests",
       "ui:clay_unittests",

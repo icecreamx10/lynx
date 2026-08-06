@@ -33,6 +33,11 @@ final class TextEditContextLayoutCollector {
 
   static TextEditContextLayoutData collect(
       AndroidText hostView, TextEditContextLayoutSnapshot projection) {
+    return collect(hostView, projection, -1, -1);
+  }
+
+  static TextEditContextLayoutData collect(AndroidText hostView,
+      TextEditContextLayoutSnapshot projection, int requestedStart, int requestedEnd) {
     LynxContext context =
         hostView.getContext() instanceof LynxContext ? (LynxContext) hostView.getContext() : null;
     LynxUIOwner owner = context == null ? null : context.getLynxUIOwner();
@@ -40,16 +45,17 @@ final class TextEditContextLayoutCollector {
       return null;
     }
     int segmentCount = projection.segmentCount();
-    int coverageFirstSegment = -1;
-    int coverageLastSegment = -1;
-    for (int index = 0; index < segmentCount; index++) {
-      if (canMeasureSegment(owner, projection, index)) {
-        if (coverageFirstSegment < 0) {
-          coverageFirstSegment = index;
-        }
-        coverageLastSegment = index;
-      } else if (coverageFirstSegment >= 0) {
-        break;
+    int coverageFirstSegment = nearestMeasurableSegment(
+        owner, projection, requestedStart, requestedEnd);
+    int coverageLastSegment = coverageFirstSegment;
+    if (coverageFirstSegment >= 0) {
+      while (coverageFirstSegment > 0
+          && canMeasureSegment(owner, projection, coverageFirstSegment - 1)) {
+        coverageFirstSegment--;
+      }
+      while (coverageLastSegment + 1 < segmentCount
+          && canMeasureSegment(owner, projection, coverageLastSegment + 1)) {
+        coverageLastSegment++;
       }
     }
     int coverageStart = coverageFirstSegment < 0 ? 0 : projection.starts[coverageFirstSegment];
@@ -92,10 +98,7 @@ final class TextEditContextLayoutCollector {
       int cursorIndex = findCursorOwner(cursorOwnerIds, cursorCount, ownerId);
       int searchStart = cursorIndex < 0 ? 0 : ownerCursors[cursorIndex];
       String renderedText = textOwner.layout.getText().toString();
-      int rawStart = renderedText.indexOf(needle, searchStart);
-      if (rawStart < 0) {
-        rawStart = renderedText.indexOf(needle);
-      }
+      int rawStart = findTextOffset(renderedText, needle, searchStart);
       if (rawStart < 0) {
         return null;
       }
@@ -113,6 +116,34 @@ final class TextEditContextLayoutCollector {
       }
     }
     return result;
+  }
+
+  static int findTextOffset(String renderedText, String segmentText, int searchStart) {
+    int offset = renderedText.indexOf(segmentText, Math.max(0, searchStart));
+    return offset >= 0 ? offset : renderedText.indexOf(segmentText);
+  }
+
+  private static int nearestMeasurableSegment(LynxUIOwner owner,
+      TextEditContextLayoutSnapshot projection, int requestedStart, int requestedEnd) {
+    int bestIndex = -1;
+    int bestDistance = Integer.MAX_VALUE;
+    int target = requestedStart < 0 ? 0 : Math.min(requestedStart, requestedEnd);
+    for (int index = 0; index < projection.segmentCount(); index++) {
+      if (!canMeasureSegment(owner, projection, index)) {
+        continue;
+      }
+      if (requestedStart < 0) {
+        return index;
+      }
+      int start = projection.starts[index];
+      int end = projection.ends[index];
+      int distance = target < start ? start - target : (target > end ? target - end : 0);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
   }
 
   private static boolean canMeasureSegment(

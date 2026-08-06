@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/public/prop_bundle.h"
@@ -157,6 +158,7 @@ class PaintingContextDarwin : public PaintingCtxPlatformImpl {
   int32_t instance_id_ = 0;
   editing::EditingHostRegistry* editing_host_registry_{nullptr};
   uint64_t editing_host_observer_id_{0};
+  std::unordered_set<int64_t> editing_host_ids_;
 
   shell::UIOperation CreateInvokeUIMethodOperation(
       int64_t element_id, std::string method, lepus::Value lepus_params,

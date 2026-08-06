@@ -24,6 +24,9 @@ class InlineTextView : public WithTypeInfo<InlineTextView, BaseTextView> {
   void SetTextRange(std::list<clay::TextRange>& range_in_paragraph) {
     range_in_paragraph_ = std::move(range_in_paragraph);
   }
+  const std::list<clay::TextRange>& text_ranges() const {
+    return range_in_paragraph_;
+  }
   BaseView* GetDeepestViewInPos(txt::Paragraph::PositionWithAffinity text_pos);
 
  private:

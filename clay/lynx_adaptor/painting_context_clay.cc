@@ -162,60 +162,76 @@ void PaintingContextClay::SetEditingHostRegistry(
     return;
   }
   if (editing_host_registry_ && editing_host_observer_id_ != 0) {
-    editing_host_registry_->RemoveLifecycleObserver(
-        editing_host_observer_id_);
+    editing_host_registry_->RemoveLifecycleObserver(editing_host_observer_id_);
   }
   editing_host_registry_ = registry;
   editing_host_observer_id_ = 0;
   edit_context_sessions_.clear();
+  pending_edit_context_sessions_.clear();
+  active_edit_context_host_id_.reset();
   if (!registry) {
     return;
   }
 
-  auto handle_lifecycle =
-      [this, registry](int64_t host_id,
-                       editing::EditingHostLifecycleEvent event) {
-        std::shared_ptr<editing::EditingPlatformSession> platform_session;
-        if (event == editing::EditingHostLifecycleEvent::kAttached) {
-          platform_session = registry->Lookup(host_id);
-        }
-        Enqueue([this, host_id, event,
-                 platform_session = std::move(platform_session)]() mutable {
-          switch (event) {
-            case editing::EditingHostLifecycleEvent::kAttached: {
-              clay::BaseView* view = view_context_->GetViewById(
-                  static_cast<int>(host_id));
-              if (!view || !view->Is<clay::TextView>() || !platform_session) {
-                return;
-              }
-              edit_context_sessions_[host_id] =
-                  std::make_unique<TextEditContextSessionClay>(
-                      static_cast<clay::TextView*>(view),
-                      std::move(platform_session));
-              break;
-            }
-            case editing::EditingHostLifecycleEvent::kActivated: {
-              auto it = edit_context_sessions_.find(host_id);
-              if (it != edit_context_sessions_.end()) {
-                it->second->Activate();
-              }
-              break;
-            }
-            case editing::EditingHostLifecycleEvent::kDeactivated: {
-              auto it = edit_context_sessions_.find(host_id);
-              if (it != edit_context_sessions_.end()) {
-                it->second->Deactivate();
-              }
-              break;
-            }
-            case editing::EditingHostLifecycleEvent::kDetached:
-              edit_context_sessions_.erase(host_id);
-              break;
+  auto handle_lifecycle = [this, registry](
+                              int64_t host_id,
+                              editing::EditingHostLifecycleEvent event) {
+    std::shared_ptr<editing::EditingPlatformSession> platform_session;
+    if (event == editing::EditingHostLifecycleEvent::kAttached) {
+      platform_session = registry->Lookup(host_id);
+    }
+    Enqueue([this, host_id, event,
+             platform_session = std::move(platform_session)]() mutable {
+      switch (event) {
+        case editing::EditingHostLifecycleEvent::kAttached: {
+          clay::BaseView* view =
+              view_context_->GetViewById(static_cast<int>(host_id));
+          if (!platform_session) {
+            return;
           }
-        });
-      };
-  editing_host_observer_id_ =
-      registry->AddLifecycleObserver(handle_lifecycle);
+          if (!view || !view->Is<clay::TextView>()) {
+            pending_edit_context_sessions_[host_id] =
+                std::move(platform_session);
+            return;
+          }
+          edit_context_sessions_[host_id] =
+              std::make_unique<TextEditContextSessionClay>(
+                  static_cast<clay::TextView*>(view),
+                  std::move(platform_session));
+          if (active_edit_context_host_id_ == host_id) {
+            edit_context_sessions_[host_id]->Activate();
+          }
+          break;
+        }
+        case editing::EditingHostLifecycleEvent::kActivated: {
+          active_edit_context_host_id_ = host_id;
+          auto it = edit_context_sessions_.find(host_id);
+          if (it != edit_context_sessions_.end()) {
+            it->second->Activate();
+          }
+          break;
+        }
+        case editing::EditingHostLifecycleEvent::kDeactivated: {
+          if (active_edit_context_host_id_ == host_id) {
+            active_edit_context_host_id_.reset();
+          }
+          auto it = edit_context_sessions_.find(host_id);
+          if (it != edit_context_sessions_.end()) {
+            it->second->Deactivate();
+          }
+          break;
+        }
+        case editing::EditingHostLifecycleEvent::kDetached:
+          pending_edit_context_sessions_.erase(host_id);
+          edit_context_sessions_.erase(host_id);
+          if (active_edit_context_host_id_ == host_id) {
+            active_edit_context_host_id_.reset();
+          }
+          break;
+      }
+    });
+  };
+  editing_host_observer_id_ = registry->AddLifecycleObserver(handle_lifecycle);
   for (int64_t host_id : registry->host_ids()) {
     handle_lifecycle(host_id, editing::EditingHostLifecycleEvent::kAttached);
   }
@@ -236,8 +252,10 @@ void PaintingContextClay::FinishLayoutOperation(
     const std::shared_ptr<PipelineOptions>& options) {
   const int32_t child_view_id = options ? options->list_comp_id_ : 0;
   const int32_t parent_view_id = options ? options->list_id_ : 0;
-  auto task = [view_context = view_context_, child_view_id, parent_view_id]() {
+  auto task = [this, view_context = view_context_, child_view_id,
+               parent_view_id]() {
     view_context->FinishLayoutOperation(child_view_id, parent_view_id);
+    RefreshEditContextSessions();
   };
   if (ui_operation_queue_ref_) {
     Enqueue(std::move(task));
@@ -247,7 +265,32 @@ void PaintingContextClay::FinishLayoutOperation(
 }
 
 void PaintingContextClay::FinishTasmOperation(
-    const std::shared_ptr<PipelineOptions>& options) {}
+    const std::shared_ptr<PipelineOptions>& options) {
+  Enqueue([this]() { RefreshEditContextSessions(); });
+}
+
+void PaintingContextClay::RefreshEditContextSessions() {
+  for (auto it = pending_edit_context_sessions_.begin();
+       it != pending_edit_context_sessions_.end();) {
+    clay::BaseView* view =
+        view_context_->GetViewById(static_cast<int>(it->first));
+    if (!view || !view->Is<clay::TextView>()) {
+      ++it;
+      continue;
+    }
+    const int64_t host_id = it->first;
+    edit_context_sessions_[host_id] =
+        std::make_unique<TextEditContextSessionClay>(
+            static_cast<clay::TextView*>(view), std::move(it->second));
+    it = pending_edit_context_sessions_.erase(it);
+    if (active_edit_context_host_id_ == host_id) {
+      edit_context_sessions_[host_id]->Activate();
+    }
+  }
+  for (auto& entry : edit_context_sessions_) {
+    entry.second->ViewTreeDidChange();
+  }
+}
 
 // Invoked by BTS
 void PaintingContextClay::InvokeUIMethod(int32_t view_id,

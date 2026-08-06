@@ -17,6 +17,8 @@
 #import <Lynx/LynxUnitUtils.h>
 #import <Lynx/LynxView+Internal.h>
 
+#import "LynxTextView+EditContext.h"
+
 @interface LynxUITextDrawParameter : NSObject
 
 @property(nonatomic) LynxTextRenderer *renderer;
