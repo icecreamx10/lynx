@@ -41,22 +41,10 @@ type SmokeStatus = {
 };
 
 const INITIAL_DOCUMENT: DocumentNode[] = [
-  { type: 'text', style: 'heading', text: '# EditContext foundation\n' },
-  { type: 'text', style: 'plain', text: 'Select across ' },
+  { type: 'text', style: 'plain', text: 'ordinary text' },
+  { type: 'text', style: 'marked', text: '@Ada' },
   { type: 'atom', atom: 'mention', block: false },
-  { type: 'text', style: 'plain', text: ' and ' },
-  { type: 'text', style: 'marked', text: 'keep typing' },
-  {
-    type: 'text',
-    style: 'code',
-    text: '.\n```js const answer = 42;```\n',
-  },
-  { type: 'atom', atom: 'diagram', block: true },
-  {
-    type: 'text',
-    style: 'plain',
-    text: '\nContinue editing after the block atom.',
-  },
+  { type: 'text', style: 'code', text: '\nconst answer = 42;\n' },
 ];
 
 function nodeLength(node: DocumentNode): number {
@@ -151,7 +139,7 @@ function applyTextUpdate(
 }
 
 const INITIAL_PROJECTION = projectionOf(INITIAL_DOCUMENT);
-const INITIAL_CARET = 56;
+const INITIAL_CARET = 8;
 const INITIAL_STATUS: SmokeStatus = {
   phase: 'READY — tap the editor, then type',
   textUpdates: 0,
@@ -311,6 +299,62 @@ function App() {
     );
   }
 
+  function renderDocumentNode(node: DocumentNode, index: number) {
+    if (node.type === 'atom') {
+      return (
+        <view
+          key={`atom-${index}`}
+          id="issue-inline-atom"
+          {...({ contenteditable: 'false' } as any)}
+          style={{
+            ...(node.block ? { display: 'block' } : {}),
+            padding: '2px 7px',
+            margin: '0 4px',
+            borderRadius: '6px',
+            backgroundColor: '#ffe4a8',
+          }}
+        >
+          <text style={{ color: '#7a4b00', fontWeight: '700' }}>ATOM</text>
+        </view>
+      );
+    }
+    if (node.style === 'marked') {
+      return (
+        <view
+          key={`mark-${index}`}
+          id="issue-inline-mark"
+          style={{ backgroundColor: '#dce7ff' }}
+        >
+          <text style={{ color: '#3159a6' }}>{node.text}</text>
+        </view>
+      );
+    }
+    if (node.style === 'code') {
+      return (
+        <view
+          key={`code-${index}`}
+          id="issue-code-block"
+          style={{
+            display: 'block',
+            marginTop: '10px',
+            padding: '10px',
+            borderRadius: '6px',
+            backgroundColor: '#202634',
+          }}
+        >
+          <text style={{ color: '#dce6ff', fontFamily: 'monospace' }}>
+            {node.text.replace(/^\n|\n$/g, '')}
+          </text>
+        </view>
+      );
+    }
+    return (
+      <text key={`text-${index}`} id="issue-ordinary-text">
+        {node.text}
+      </text>
+    );
+  }
+
   return (
     <scroll-view
       scroll-orientation="vertical"
@@ -328,11 +372,11 @@ function App() {
             marginTop: '8px',
           }}
         >
-          Frontend-owned Markdown editor
+          Issue #8132 frontend case
         </text>
         <text style={{ color: '#646b7a', fontSize: '15px', marginTop: '8px' }}>
-          One UTF-16 projection; React keeps rich runs and atoms, native owns
-          input state and events.
+          Nested text, transparent inline view, excluded atom, and block view in
+          one UTF-16 editing projection.
         </text>
 
         <view
@@ -378,7 +422,7 @@ function App() {
               whiteSpace: 'pre-wrap',
             }}
           >
-            {projectionOf(document)}
+            {document.map(renderDocumentNode)}
           </text>
         </view>
       </view>
