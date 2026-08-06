@@ -303,14 +303,13 @@ TEST_F_UI(TextSelectionTest,
 }
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-TEST_F_UI(TextSelectionTest, EditContextDragPreservesPointerDownAsAnchor) {
+TEST_F_UI(TextSelectionTest, EditContextPointerDownSetsCaretAndDragExtends) {
   std::vector<std::pair<FloatPoint, bool>> hit_tests;
   text_view_->SetEditContextHitTestCallback(
       [&hit_tests](const FloatPoint& point, bool extend) {
         hit_tests.emplace_back(point, extend);
       });
-  text_view_->drag_down_position_ = FloatPoint(10.f, 20.f);
-
+  text_view_->PerformPointerDownSelection(FloatPoint(10.f, 20.f));
   text_view_->PerformStartDragSelection(FloatPoint(30.f, 20.f));
 
   ASSERT_EQ(hit_tests.size(), 2u);

@@ -312,7 +312,6 @@ void TextView::ClearGestureRecognizers() {
 #else
   RemoveGestureRecognizer(drag_recognizer_);
   drag_recognizer_ = nullptr;
-  drag_down_position_.reset();
 #endif
 }
 
@@ -399,8 +398,7 @@ void TextView::ResetGestureRecognizers() {
   drag_recognizer_ = drag_recognizer.get();
   drag_recognizer->SetDragDownCallback(
       [this](const PointerEvent& event) {
-        drag_down_position_ = event.position;
-        RequestFocus();
+        PerformPointerDownSelection(event.position);
       });
   drag_recognizer->SetDragStartCallback(
       [this](const FloatPoint& event) { PerformStartDragSelection(event); });
@@ -409,19 +407,18 @@ void TextView::ResetGestureRecognizers() {
         PerformMoveSelection(event);
       });
   drag_recognizer->SetDragCancelCallback(
-      [this]() {
-        drag_down_position_.reset();
-        PerformCancelSelection();
-      });
-  drag_recognizer->SetDragEndCallback(
-      [this](const Velocity&) { drag_down_position_.reset(); });
+      [this]() { PerformCancelSelection(); });
   AddGestureRecognizer(std::move(drag_recognizer));
 #endif
 }
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
+void TextView::PerformPointerDownSelection(FloatPoint point) {
+  RequestFocus();
+  PerformBeginSelection(point);
+}
+
 void TextView::PerformStartDragSelection(FloatPoint point) {
-  PerformBeginSelection(drag_down_position_.value_or(point));
   PerformMoveSelection(point);
 }
 #endif

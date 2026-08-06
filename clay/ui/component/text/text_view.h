@@ -7,7 +7,6 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -160,13 +159,14 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
   FRIEND_TEST(TextSelectionTest,
               EditContextEnablesSelectionWithoutOverridingAttribute);
   FRIEND_TEST(TextSelectionTest,
-              EditContextDragPreservesPointerDownAsAnchor);
+              EditContextPointerDownSetsCaretAndDragExtends);
   FRIEND_TEST(TextSelectionTest,
               SetAttributeUpdatesVisibleSelectionHandleColors);
 
   void UpdateSelectionHandleLayout(SelectionHandleView* handle);
   void UpdateTextSelectionBehavior();
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
+  void PerformPointerDownSelection(FloatPoint point);
   void PerformStartDragSelection(FloatPoint point);
 #endif
 
@@ -185,7 +185,6 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
   LongPressGestureRecognizer* long_press_recognizer_ = nullptr;
 #else
   DragGestureRecognizer* drag_recognizer_ = nullptr;
-  std::optional<FloatPoint> drag_down_position_;
 #endif
 #ifndef ENABLE_CLAY_LITE
   SelectionPopupView* selection_popup_ = nullptr;
