@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/include/fml/task_runner.h"
+#include "base/include/string/string_utils.h"
 #include "clay/fml/logging.h"
 #include "clay/gfx/geometry/float_point.h"
 #include "clay/gfx/geometry/float_rect.h"
@@ -120,28 +121,57 @@ TextView::~TextView() { HideSelectionPopup(); }
 void TextView::SetAttribute(const char* attr, const clay::Value& value) {
   auto kw = GetKeywordID(attr);
   if (kw == KeywordID::kTextSelection) {
-    if ((is_text_selection_ = attribute_utils::GetBool(value))) {
-      SetFocusable(true);
-      if (!custom_text_selection_) {
-        ResetGestureRecognizers();
-      }
-      GetRenderText()->SetSelectionChangedListener(
-          [this](int selection_start, int selection_end) {
-            OnSelectionChanged(selection_start, selection_end);
-          });
-    } else {
-      ClearGestureRecognizers();
-    }
+    is_text_selection_ = attribute_utils::GetBool(value);
+    UpdateTextSelectionBehavior();
   } else if (kw == KeywordID::kCustomContextMenu) {
     custom_context_menu_ = attribute_utils::GetBool(value);
   } else if (kw == KeywordID::kCustomTextSelection) {
     custom_text_selection_ = attribute_utils::GetBool(value);
+    UpdateTextSelectionBehavior();
   } else if (kw == KeywordID::kSelectionHandleColor) {
     SetSelectionHandleColor(value.IsString()
                                 ? attribute_utils::GetColor(value)
                                 : Color(attribute_utils::GetUint(value, 0)));
   } else if (kw == KeywordID::kSelectionHandleSize) {
     SetSelectionHandleSize(attribute_utils::GetNum(value));
+  } else if (kw == KeywordID::kCaretColor) {
+    if (value.IsUint()) {
+      GetRenderText()->SetCaretColor(Color(attribute_utils::GetUint(value)));
+    } else {
+      Color color;
+      const auto caret_color = lynx::base::TrimString(
+          attribute_utils::GetCString(value), " \t\n\r\f\v",
+          lynx::base::TrimPositions::TRIM_ALL);
+      GetRenderText()->SetCaretColor(Color::Parse(caret_color, &color)
+                                         ? std::make_optional(color)
+                                         : std::nullopt);
+    }
+  } else if (kw == KeywordID::kXCaretGradient) {
+    const auto gradient_value = lynx::base::TrimString(
+        attribute_utils::GetCString(value), " \t\n\r\f\v",
+        lynx::base::TrimPositions::TRIM_ALL);
+    if (gradient_value.empty() || gradient_value == "none") {
+      GetRenderText()->SetCaretGradient(std::nullopt);
+    } else if (auto gradient = Gradient::Create(gradient_value)) {
+      GetRenderText()->SetCaretGradient(std::move(gradient));
+    } else {
+      GetRenderText()->SetCaretGradient(std::nullopt);
+    }
+  } else if (kw == KeywordID::kXCaretWidth) {
+    double width = 0.0;
+    GetRenderText()->SetCaretWidth(attribute_utils::TryGetNum(value, width)
+                                       ? static_cast<float>(width)
+                                       : 0.0f);
+  } else if (kw == KeywordID::kXCaretHeight) {
+    double height = 0.0;
+    GetRenderText()->SetCaretHeight(attribute_utils::TryGetNum(value, height)
+                                        ? static_cast<float>(height)
+                                        : 0.0f);
+  } else if (kw == KeywordID::kXCaretRadius) {
+    double radius = 0.0;
+    GetRenderText()->SetCaretRadius(attribute_utils::TryGetNum(value, radius)
+                                        ? static_cast<float>(radius)
+                                        : 0.0f);
   } else if (kw == KeywordID::kColor) {
     if (value.IsUint()) {
       SetColor(Color(attribute_utils::GetUint(value, 0xff000000)));
@@ -158,6 +188,32 @@ void TextView::SetAttribute(const char* attr, const clay::Value& value) {
   } else {
     BaseView::SetAttribute(attr, value);
   }
+}
+
+void TextView::SetEditContextSelectionEnabled(bool enabled) {
+  if (edit_context_selection_enabled_ == enabled) {
+    return;
+  }
+  edit_context_selection_enabled_ = enabled;
+  UpdateTextSelectionBehavior();
+}
+
+void TextView::UpdateTextSelectionBehavior() {
+  if (is_text_selection_ || edit_context_selection_enabled_) {
+    SetFocusable(true);
+    if (!custom_text_selection_) {
+      ResetGestureRecognizers();
+    } else {
+      ClearGestureRecognizers();
+    }
+    GetRenderText()->SetSelectionChangedListener(
+        [this](int selection_start, int selection_end) {
+          OnSelectionChanged(selection_start, selection_end);
+        });
+    return;
+  }
+  ClearGestureRecognizers();
+  GetRenderText()->SetSelectionChangedListener(nullptr);
 }
 
 void TextView::SetBorderWidth(std::vector<Side> sides,
@@ -190,6 +246,7 @@ void TextView::SetInlineEmojiInfo(
 }
 
 void TextView::SetColor(Color color) {
+  GetRenderText()->SetCaretFallbackColor(color);
   if (IsTransitionAnimationReady() &&
       TransitionMgr()->Enabled(ClayAnimationPropertyType::kColor) &&
       TransitionMgr()->TransitionTo(ClayAnimationPropertyType::kColor, color)) {
@@ -255,6 +312,7 @@ void TextView::ClearGestureRecognizers() {
 #else
   RemoveGestureRecognizer(drag_recognizer_);
   drag_recognizer_ = nullptr;
+  drag_down_position_.reset();
 #endif
 }
 
@@ -340,18 +398,33 @@ void TextView::ResetGestureRecognizers() {
   drag_recognizer->SetTouchSlop(1);
   drag_recognizer_ = drag_recognizer.get();
   drag_recognizer->SetDragDownCallback(
-      [this](const PointerEvent&) { RequestFocus(); });
+      [this](const PointerEvent& event) {
+        drag_down_position_ = event.position;
+        RequestFocus();
+      });
   drag_recognizer->SetDragStartCallback(
-      [this](const FloatPoint& event) { PerformBeginSelection(event); });
+      [this](const FloatPoint& event) { PerformStartDragSelection(event); });
   drag_recognizer->SetDragUpdateCallback(
       [this](const FloatPoint& event, const FloatSize& delta) {
         PerformMoveSelection(event);
       });
   drag_recognizer->SetDragCancelCallback(
-      [this]() { PerformCancelSelection(); });
+      [this]() {
+        drag_down_position_.reset();
+        PerformCancelSelection();
+      });
+  drag_recognizer->SetDragEndCallback(
+      [this](const Velocity&) { drag_down_position_.reset(); });
   AddGestureRecognizer(std::move(drag_recognizer));
 #endif
 }
+
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
+void TextView::PerformStartDragSelection(FloatPoint point) {
+  PerformBeginSelection(drag_down_position_.value_or(point));
+  PerformMoveSelection(point);
+}
+#endif
 
 TextRange TextView::SelectWord(size_t pos) {
   auto painter = GetRenderText()->GetPainter();

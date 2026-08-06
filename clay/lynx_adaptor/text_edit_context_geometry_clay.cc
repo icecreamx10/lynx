@@ -130,6 +130,26 @@ std::optional<size_t> MapClayOwnerOffsetToProjection(
   return projection_offset;
 }
 
+std::optional<int64_t> FindClayCaretOwner(
+    const std::vector<ClayEditingTextPlacement>& placements,
+    size_t projection_offset) {
+  std::optional<int64_t> leading_owner;
+  for (const ClayEditingTextPlacement& placement : placements) {
+    if (!placement.available) {
+      continue;
+    }
+    if (projection_offset > placement.projection_range.start() &&
+        projection_offset <= placement.projection_range.end()) {
+      return placement.owner_id;
+    }
+    if (!leading_owner &&
+        projection_offset == placement.projection_range.start()) {
+      leading_owner = placement.owner_id;
+    }
+  }
+  return leading_owner;
+}
+
 void MeasureClayBlockBoundaries(
     const editing::EditingProjectionSnapshot& projection,
     std::vector<ClayEditingMeasuredUnit>* measured) {

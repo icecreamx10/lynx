@@ -8,7 +8,9 @@
 #include <limits>
 #include <utility>
 
+#include "base/include/fml/time/time_delta.h"
 #include "base/include/string/string_utils.h"
+#include "clay/fml/logging.h"
 #include "clay/gfx/geometry/float_point.h"
 #include "clay/gfx/geometry/float_rect.h"
 #include "clay/gfx/geometry/transform.h"
@@ -21,6 +23,8 @@
 namespace lynx::tasm {
 
 namespace {
+
+constexpr uint64_t kCaretTwinkleIntervalMs = 500;
 
 clay::TextView* FindTextView(clay::ViewContext* context, int64_t owner_id) {
   if (!context || owner_id < std::numeric_limits<int>::min() ||
@@ -65,6 +69,7 @@ TextEditContextSessionClay::~TextEditContextSessionClay() {
   for (int64_t owner_id : callback_owner_ids_) {
     if (auto* view = FindTextView(
             host_ ? host_->page_view()->GetViewContext() : nullptr, owner_id)) {
+      view->SetEditContextSelectionEnabled(false);
       view->SetEditContextSelectionChangedCallback(nullptr);
       view->SetEditContextHitTestCallback(nullptr);
     }
@@ -102,6 +107,7 @@ void TextEditContextSessionClay::Deactivate() {
   }
   active_ = false;
   pointer_anchor_.reset();
+  StopCaretBlink();
   text_input_controller_->Hide();
   text_input_controller_->ClearClient();
   if (session_ && session_->IsActive()) {
@@ -138,6 +144,7 @@ void TextEditContextSessionClay::OnActivationChanged(bool active) {
   if (active) {
     text_input_controller_->Show();
   } else {
+    StopCaretBlink();
     text_input_controller_->Hide();
   }
 }
@@ -228,6 +235,9 @@ void TextEditContextSessionClay::ApplySnapshot(
   RefreshSelectionCallbacks(projection_);
   PushNativeState(snapshot_, restart_input, refresh_geometry);
   UpdateRenderedSelection(snapshot_, projection_);
+  if (active_) {
+    RestartCaretBlink();
+  }
   if (refresh_geometry && session_) {
     RefreshGeometry(editing::TextRange(snapshot_.selection.extent()),
                     snapshot_.revision, projection_.revision);
@@ -450,6 +460,8 @@ void TextEditContextSessionClay::RefreshSelectionCallbacks(
   for (int64_t owner_id : callback_owner_ids_) {
     auto* view = FindTextView(context, owner_id);
     if (view && (next.count(owner_id) == 0 || !IsMounted(view))) {
+      view->GetRenderText()->SetCaretDisplay(false);
+      view->SetEditContextSelectionEnabled(false);
       view->SetEditContextSelectionChangedCallback(nullptr);
       view->SetEditContextHitTestCallback(nullptr);
     }
@@ -464,6 +476,7 @@ void TextEditContextSessionClay::RefreshSelectionCallbacks(
               weak->HandleViewSelectionChanged(owner_id, start, end);
             }
           });
+      view->SetEditContextSelectionEnabled(true);
       view->SetEditContextHitTestCallback(
           [weak](const clay::FloatPoint& point, bool extend) {
             if (weak) {
@@ -478,7 +491,7 @@ void TextEditContextSessionClay::RefreshSelectionCallbacks(
 
 void TextEditContextSessionClay::UpdateRenderedSelection(
     const editing::EditingStateSnapshot& snapshot,
-    const editing::EditingProjectionSnapshot&) {
+    const editing::EditingProjectionSnapshot& projection) {
   if (!host_) {
     return;
   }
@@ -506,6 +519,50 @@ void TextEditContextSessionClay::UpdateRenderedSelection(
         clay::TextRange(local_base, local_extent));
   }
   applying_snapshot_ = false;
+  UpdateRenderedCaret();
+}
+
+void TextEditContextSessionClay::RestartCaretBlink() {
+  if (!active_ || !host_) {
+    return;
+  }
+  caret_visible_ = true;
+  UpdateRenderedCaret();
+  if (!caret_timer_) {
+    caret_timer_ = std::make_unique<fml::RepeatingTimer>(
+        host_->page_view()->GetTaskRunner());
+  }
+  auto weak = weak_factory_.GetWeakPtr();
+  caret_timer_->Start(fml::TimeDelta::FromMilliseconds(kCaretTwinkleIntervalMs),
+                      [weak]() {
+                        if (weak) {
+                          weak->caret_visible_ = !weak->caret_visible_;
+                          weak->UpdateRenderedCaret();
+                        }
+                      });
+}
+
+void TextEditContextSessionClay::StopCaretBlink() {
+  caret_timer_.reset();
+  caret_visible_ = false;
+  UpdateRenderedCaret();
+}
+
+void TextEditContextSessionClay::UpdateRenderedCaret() {
+  if (!host_) {
+    return;
+  }
+  const auto caret_owner =
+      active_ && caret_visible_ && snapshot_.selection.collapsed()
+          ? FindClayCaretOwner(text_placements_, snapshot_.selection.extent())
+          : std::nullopt;
+  clay::ViewContext* context = host_->page_view()->GetViewContext();
+  for (int64_t owner_id : callback_owner_ids_) {
+    if (auto* view = FindTextView(context, owner_id)) {
+      const bool display = caret_owner == owner_id;
+      view->GetRenderText()->SetCaretDisplay(display);
+    }
+  }
 }
 
 std::optional<size_t> TextEditContextSessionClay::MapViewOffsetToProjection(

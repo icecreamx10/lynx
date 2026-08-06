@@ -55,6 +55,32 @@ class RenderText : public RenderBox {
   void SetSelection(const TextRange& range);
   void SetAllSelection();
 
+  // EditContext renders its collapsed selection with the same caret styling
+  // contract as input/textarea.
+  void SetCaretDisplay(bool display);
+  void SetCaretColor(std::optional<Color> color);
+  void SetCaretFallbackColor(const Color& color);
+  void SetCaretGradient(std::optional<Gradient> gradient);
+  void SetCaretWidth(float width);
+  void SetCaretHeight(float height);
+  void SetCaretRadius(float radius);
+  float CaretWidth() const;
+  FloatRect ComputeCaretRect() const;
+
+  bool CaretDisplayedForTesting() const { return display_caret_; }
+  const std::optional<Color>& CaretColorForTesting() const {
+    return caret_color_;
+  }
+  const std::optional<Gradient>& CaretGradientForTesting() const {
+    return caret_gradient_;
+  }
+  const std::optional<float>& CaretHeightForTesting() const {
+    return caret_height_;
+  }
+  const std::optional<float>& CaretRadiusForTesting() const {
+    return caret_radius_;
+  }
+
   void PaintSelection(GraphicsContext* context);
 
   std::u16string GetSelectionString() const;
@@ -102,6 +128,8 @@ class RenderText : public RenderBox {
 
  private:
   void PaintText(GraphicsContext* graphics_context, const FloatPoint& offset);
+  void PaintCaret(GraphicsContext* graphics_context,
+                  const FloatPoint& paragraph_offset);
   void PaintInlineEmojis(GraphicsContext* graphics_context, double x_offset,
                          double y_offset);
 
@@ -111,6 +139,13 @@ class RenderText : public RenderBox {
 
   SelectionChangedCallback selection_changed_callback_;
   std::unordered_map<int, InlineEmojiRenderInfo> inline_emojis_;
+  std::optional<Color> caret_color_;
+  Color caret_fallback_color_ = Color::kBlack();
+  std::optional<Gradient> caret_gradient_;
+  std::optional<float> caret_width_;
+  std::optional<float> caret_height_;
+  std::optional<float> caret_radius_;
+  bool display_caret_ = false;
 };
 
 }  // namespace clay

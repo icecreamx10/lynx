@@ -232,6 +232,97 @@ TEST_F_UI(TextSelectionTest, SetAttributeUpdatesVisibleSelectionHandleColors) {
             Color::kBlue());
 }
 
+TEST_F_UI(TextSelectionTest, EditContextCaretReusesInputCaretAttributes) {
+  const std::u16string text = u"hello world";
+  text_view_->SetParagraph(CreateParagraph(text), text);
+  auto* render_text = text_view_->GetRenderText();
+
+  constexpr Color kCaretColor(0xFF5B67F1);
+  text_view_->SetAttribute("caret-color",
+                           clay::Value(static_cast<uint32_t>(kCaretColor)));
+  text_view_->SetAttribute("-x-caret-gradient", clay::Value("none"));
+  text_view_->SetAttribute("-x-caret-width", clay::Value(3.0));
+  text_view_->SetAttribute("-x-caret-height", clay::Value(18.0));
+  text_view_->SetAttribute("-x-caret-radius", clay::Value(1.5));
+  render_text->SetSelection(TextRange(5));
+  render_text->SetCaretDisplay(true);
+
+  ASSERT_TRUE(render_text->CaretColorForTesting().has_value());
+  EXPECT_EQ(*render_text->CaretColorForTesting(), kCaretColor);
+  EXPECT_FALSE(render_text->CaretGradientForTesting().has_value());
+  EXPECT_FLOAT_EQ(render_text->CaretWidth(), 3.f);
+  ASSERT_TRUE(render_text->CaretHeightForTesting().has_value());
+  EXPECT_FLOAT_EQ(*render_text->CaretHeightForTesting(), 18.f);
+  ASSERT_TRUE(render_text->CaretRadiusForTesting().has_value());
+  EXPECT_FLOAT_EQ(*render_text->CaretRadiusForTesting(), 1.5f);
+  EXPECT_TRUE(render_text->CaretDisplayedForTesting());
+
+  const FloatRect caret = render_text->ComputeCaretRect();
+  EXPECT_FLOAT_EQ(caret.width(), 3.f);
+  EXPECT_GT(caret.height(), 0.f);
+}
+
+TEST_F_UI(TextSelectionTest, EditContextCaretUsesSecondLineGeometry) {
+  const std::u16string text = u"first line\nsecond line";
+  text_view_->SetParagraph(CreateParagraph(text), text);
+  auto* render_text = text_view_->GetRenderText();
+
+  constexpr int kSecondLineOffset = 14;
+  render_text->SetSelection(TextRange(kSecondLineOffset));
+  render_text->SetCaretDisplay(true);
+
+  const FloatRect caret = render_text->ComputeCaretRect();
+  EXPECT_GT(caret.x(), 0.f);
+  EXPECT_GT(caret.y(), 0.f);
+  EXPECT_GT(caret.height(), 0.f);
+}
+
+TEST_F_UI(TextSelectionTest,
+          EditContextEnablesSelectionWithoutOverridingAttribute) {
+  text_view_->SetAttribute("text-selection", clay::Value(false));
+  EXPECT_FALSE(text_view_->is_text_selection_);
+
+  text_view_->SetEditContextSelectionEnabled(true);
+  EXPECT_TRUE(text_view_->edit_context_selection_enabled_);
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  EXPECT_NE(text_view_->double_tap_recognizer_, nullptr);
+  EXPECT_NE(text_view_->long_press_recognizer_, nullptr);
+#else
+  EXPECT_NE(text_view_->drag_recognizer_, nullptr);
+#endif
+
+  text_view_->SetEditContextSelectionEnabled(false);
+  EXPECT_FALSE(text_view_->edit_context_selection_enabled_);
+  EXPECT_FALSE(text_view_->is_text_selection_);
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  EXPECT_EQ(text_view_->double_tap_recognizer_, nullptr);
+  EXPECT_EQ(text_view_->long_press_recognizer_, nullptr);
+#else
+  EXPECT_EQ(text_view_->drag_recognizer_, nullptr);
+#endif
+}
+
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
+TEST_F_UI(TextSelectionTest, EditContextDragPreservesPointerDownAsAnchor) {
+  std::vector<std::pair<FloatPoint, bool>> hit_tests;
+  text_view_->SetEditContextHitTestCallback(
+      [&hit_tests](const FloatPoint& point, bool extend) {
+        hit_tests.emplace_back(point, extend);
+      });
+  text_view_->drag_down_position_ = FloatPoint(10.f, 20.f);
+
+  text_view_->PerformStartDragSelection(FloatPoint(30.f, 20.f));
+
+  ASSERT_EQ(hit_tests.size(), 2u);
+  EXPECT_FLOAT_EQ(hit_tests[0].first.x(), 10.f);
+  EXPECT_FLOAT_EQ(hit_tests[0].first.y(), 20.f);
+  EXPECT_FALSE(hit_tests[0].second);
+  EXPECT_FLOAT_EQ(hit_tests[1].first.x(), 30.f);
+  EXPECT_FLOAT_EQ(hit_tests[1].first.y(), 20.f);
+  EXPECT_TRUE(hit_tests[1].second);
+}
+#endif
+
 TEST_F_UI(TextSelectionTest,
           SetTextSelectionKeepsHandlesAtVisualSelectionEnds) {
   const std::u16string text = u"hello world";

@@ -48,6 +48,13 @@ std::optional<size_t> MapClayOwnerOffsetToProjection(
     const std::vector<ClayEditingTextPlacement>& placements, int64_t owner_id,
     size_t owner_offset);
 
+// Chooses the glyph-bearing text owner that should paint a collapsed caret.
+// At a shared text boundary the preceding owner wins, matching the controller's
+// trailing-edge-first selection-rect lookup.
+std::optional<int64_t> FindClayCaretOwner(
+    const std::vector<ClayEditingTextPlacement>& placements,
+    size_t projection_offset);
+
 // Block separators are logical projection units even though Clay has no glyph
 // for them. Give each mounted separator a caret-shaped rectangle at the
 // adjacent line edge so geometry remains contiguous across text owners.

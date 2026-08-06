@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -96,6 +97,7 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
       std::function<void(const FloatPoint&, bool)> callback) {
     edit_context_hit_test_callback_ = std::move(callback);
   }
+  void SetEditContextSelectionEnabled(bool enabled);
 
   void setTextSelection(const LynxModuleValues& args,
                         const LynxUIMethodCallback& callback);
@@ -156,9 +158,17 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
               SetTextSelectionKeepsHandlesAtVisualSelectionEnds);
   FRIEND_TEST(TextSelectionTest, SetTextSelectionHidesVisualStartHandle);
   FRIEND_TEST(TextSelectionTest,
+              EditContextEnablesSelectionWithoutOverridingAttribute);
+  FRIEND_TEST(TextSelectionTest,
+              EditContextDragPreservesPointerDownAsAnchor);
+  FRIEND_TEST(TextSelectionTest,
               SetAttributeUpdatesVisibleSelectionHandleColors);
 
   void UpdateSelectionHandleLayout(SelectionHandleView* handle);
+  void UpdateTextSelectionBehavior();
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
+  void PerformStartDragSelection(FloatPoint point);
+#endif
 
   BaseView* GetTopViewToAcceptEvent(const FloatPoint& position,
                                     FloatPoint* relative_position,
@@ -169,11 +179,13 @@ class TextView : public WithTypeInfo<TextView, BaseTextView>,
   bool ClickOnText(size_t glyph_index, const FloatPoint& point_by_paragraph,
                    txt::Paragraph* paragraph);
   bool is_text_selection_ = false;
+  bool edit_context_selection_enabled_ = false;
 #if defined(OS_ANDROID) || defined(OS_IOS)
   MultiTapGestureRecognizer* double_tap_recognizer_ = nullptr;
   LongPressGestureRecognizer* long_press_recognizer_ = nullptr;
 #else
   DragGestureRecognizer* drag_recognizer_ = nullptr;
+  std::optional<FloatPoint> drag_down_position_;
 #endif
 #ifndef ENABLE_CLAY_LITE
   SelectionPopupView* selection_popup_ = nullptr;

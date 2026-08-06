@@ -17,8 +17,10 @@
 #include "clay/gfx/style/color_source.h"
 #include "clay/gfx/style/tile_mode.h"
 #include "clay/ui/common/text_input_type_traits.h"
+#include "clay/ui/component/editable/text_utils.h"
 #include "clay/ui/component/text/inline_emoji_bitmap.h"
 #include "clay/ui/component/text/text_style.h"
+#include "clay/ui/painter/gradient_factory.h"
 #include "clay/ui/painter/text_painter.h"
 #include "clay/ui/rendering/renderer.h"
 
@@ -27,6 +29,12 @@ namespace clay {
 namespace {
 
 constexpr uint32_t kSelectionColor = 0x402196F3;  // material blue[200]
+#if defined(OS_MAC) || defined(OS_WIN)
+constexpr float kCaretWidth = 1.f;
+#else
+constexpr float kCaretWidth = 2.f;
+#endif
+constexpr float kCaretVerticalPreserveSpace = 2.f;
 
 }  // namespace
 
@@ -164,6 +172,189 @@ void RenderText::PaintText(GraphicsContext* graphics_context,
   }
   if (select_end_ != select_start_) {
     PaintSelection(graphics_context);
+  } else if (display_caret_ && select_end_ >= 0) {
+    PaintCaret(graphics_context, paragraph_content_offset);
+  }
+}
+
+void RenderText::SetCaretDisplay(bool display) {
+  if (display_caret_ != display) {
+    display_caret_ = display;
+    MarkNeedsPaint();
+  }
+}
+
+void RenderText::SetCaretColor(std::optional<Color> color) {
+  if (caret_color_ != color) {
+    caret_color_ = color;
+    MarkNeedsPaint();
+  }
+}
+
+void RenderText::SetCaretFallbackColor(const Color& color) {
+  if (caret_fallback_color_ != color) {
+    caret_fallback_color_ = color;
+    if (!caret_color_) {
+      MarkNeedsPaint();
+    }
+  }
+}
+
+void RenderText::SetCaretGradient(std::optional<Gradient> gradient) {
+  if (caret_gradient_ != gradient) {
+    caret_gradient_ = std::move(gradient);
+    MarkNeedsPaint();
+  }
+}
+
+void RenderText::SetCaretWidth(float width) {
+  std::optional<float> next_width =
+      width > 0.f ? std::make_optional(width) : std::nullopt;
+  if (caret_width_ != next_width) {
+    caret_width_ = std::move(next_width);
+    MarkNeedsPaint();
+  }
+}
+
+void RenderText::SetCaretHeight(float height) {
+  std::optional<float> next_height =
+      height > 0.f ? std::make_optional(height) : std::nullopt;
+  if (caret_height_ != next_height) {
+    caret_height_ = std::move(next_height);
+    MarkNeedsPaint();
+  }
+}
+
+void RenderText::SetCaretRadius(float radius) {
+  std::optional<float> next_radius =
+      radius > 0.f ? std::make_optional(radius) : std::nullopt;
+  if (caret_radius_ != next_radius) {
+    caret_radius_ = std::move(next_radius);
+    MarkNeedsPaint();
+  }
+}
+
+float RenderText::CaretWidth() const {
+  if (caret_width_ && *caret_width_ > 0.f) {
+    return *caret_width_;
+  }
+  return renderer_ ? renderer_->ConvertFrom<kPixelTypeLogical>(kCaretWidth)
+                   : kCaretWidth;
+}
+
+FloatRect RenderText::ComputeCaretRect() const {
+  const float preserve_space = renderer_
+                                   ? renderer_->ConvertFrom<kPixelTypeLogical>(
+                                         kCaretVerticalPreserveSpace)
+                                   : kCaretVerticalPreserveSpace;
+  const float paragraph_height =
+      paragraph_ ? static_cast<float>(paragraph_->GetHeight()) : 0.f;
+  FloatRect caret(0.f, preserve_space, CaretWidth(),
+                  std::max(0.f, paragraph_height - 2.f * preserve_space));
+  if (!painter_ || !paragraph_ || text_.empty() || select_end_ < 0) {
+    return caret;
+  }
+
+  const int length = static_cast<int>(text_.length());
+  const int caret_offset = std::clamp(select_end_, 0, length);
+  auto update_from_box = [&caret](const TextBox& box, bool after) {
+    caret.SetX(after ? box.rect.MaxX() : box.rect.x());
+    caret.SetY(box.rect.y());
+    caret.SetHeight(box.rect.height());
+  };
+  auto downstream = [&]() {
+    if (caret_offset >= length) {
+      return false;
+    }
+    const size_t next_code_unit = text_.at(caret_offset);
+    const bool needs_search =
+        TextUtils::IsHighSurrogate(next_code_unit) ||
+        TextUtils::IsLowSurrogate(next_code_unit) ||
+        next_code_unit == TextUtils::kZWJUtf16 ||
+        TextUtils::IsUnicodeDirectionality(next_code_unit);
+    int cluster_length = needs_search ? 2 : 1;
+    std::vector<TextBox> boxes;
+    while (boxes.empty()) {
+      const int next_offset = std::min(length, caret_offset + cluster_length);
+      boxes = painter_->GetRectsForRange(caret_offset, next_offset,
+                                         RectHeightStyle::kStrut);
+      if (!boxes.empty() || !needs_search || next_offset >= length) {
+        break;
+      }
+      cluster_length *= 2;
+    }
+    if (boxes.empty() || boxes.front().rect.height() <= 0.f) {
+      return false;
+    }
+    update_from_box(boxes.front(), false);
+    return true;
+  };
+  auto upstream = [&]() {
+    if (caret_offset <= 0) {
+      return false;
+    }
+    const size_t previous_code_unit = text_.at(caret_offset - 1);
+    const bool needs_search =
+        TextUtils::IsHighSurrogate(previous_code_unit) ||
+        TextUtils::IsLowSurrogate(previous_code_unit) ||
+        previous_code_unit == TextUtils::kZWJUtf16 ||
+        TextUtils::IsUnicodeDirectionality(previous_code_unit);
+    int cluster_length = needs_search ? 2 : 1;
+    std::vector<TextBox> boxes;
+    while (boxes.empty()) {
+      const int previous_offset = std::max(0, caret_offset - cluster_length);
+      boxes = painter_->GetRectsForRange(previous_offset, caret_offset,
+                                         RectHeightStyle::kMax);
+      if (!boxes.empty() || !needs_search || previous_offset == 0) {
+        break;
+      }
+      cluster_length *= 2;
+    }
+    if (boxes.empty() || boxes.back().rect.height() <= 0.f) {
+      return false;
+    }
+    update_from_box(boxes.back(), true);
+    return true;
+  };
+
+  if (!downstream()) {
+    upstream();
+  }
+  return caret;
+}
+
+void RenderText::PaintCaret(GraphicsContext* graphics_context,
+                            const FloatPoint& paragraph_offset) {
+  FloatRect paint_rect = ComputeCaretRect();
+  paint_rect.Move(paragraph_offset.x(), paragraph_offset.y());
+  if (caret_height_ && *caret_height_ > 0.f) {
+    const float height = *caret_height_;
+    paint_rect.SetY(paint_rect.y() + (paint_rect.height() - height) * 0.5f);
+    paint_rect.SetHeight(height);
+  }
+  if (paint_rect.width() <= 0.f || paint_rect.height() <= 0.f) {
+    return;
+  }
+
+  class Paint paint;
+  const auto fallback_color =
+      caret_color_.value_or(caret_fallback_color_).Value();
+  if (caret_gradient_) {
+    auto shader = GradientFactory::CreateShader(*caret_gradient_, paint_rect);
+    shader ? paint.setColorSource(shader) : paint.setColor(fallback_color);
+  } else {
+    paint.setColor(fallback_color);
+  }
+
+  if (caret_radius_ && *caret_radius_ > 0.f) {
+    const float radius =
+        std::min(*caret_radius_,
+                 std::min(paint_rect.width(), paint_rect.height()) * 0.5f);
+    paint.setAntiAlias(true);
+    graphics_context->DrawRRect(
+        skity::RRect::MakeRectXY(paint_rect, radius, radius), paint);
+  } else {
+    graphics_context->DrawRect(paint_rect, paint);
   }
 }
 

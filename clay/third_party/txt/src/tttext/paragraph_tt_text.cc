@@ -222,10 +222,9 @@ std::vector<Paragraph::TextBox> ParagraphTTText::GetRectsForRange(
       continue;
 
     float rect[4] = {0};
-    auto local_start = std::max(start, start_index) - start_index;
-    auto local_end = std::min(end, end_index) - start_index;
-    text_line->GetBoundingRectByCharRange(rect, local_start,
-                                          local_end - local_start);
+    const auto range_start = std::max(start, start_index);
+    const auto range_end = std::min(end, end_index);
+    text_line->GetBoundingRectByCharRange(rect, range_start, range_end);
     result.push_back(
         TextBox(skity::Rect::MakeXYWH(rect[0], rect[1], rect[2], rect[3]),
                 TextDirection::ltr));
@@ -242,7 +241,7 @@ std::vector<Paragraph::TextBox> ParagraphTTText::GetRectsForPlaceholders() {
       if (placeholder_pos_[i] >= start_index &&
           placeholder_pos_[i] < end_index) {
         float rect[4] = {0};
-        text_line->GetCharBoundingRect(rect, placeholder_pos_[i] - start_index);
+        text_line->GetCharBoundingRect(rect, placeholder_pos_[i]);
         if (rect[2] != 0 && rect[3] != 0) {
           result.push_back(
               TextBox(skity::Rect::MakeXYWH(rect[0], rect[1], rect[2], rect[3]),

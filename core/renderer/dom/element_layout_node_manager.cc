@@ -71,6 +71,19 @@ std::u16string ElementText(Element* element) {
                                   : AttributeText(text->second);
 }
 
+bool IsInlineTextElement(Element* element) {
+  if (!element || !element->is_inline_element()) {
+    return false;
+  }
+  const auto& tag = element->GetTag();
+  return tag.IsEqual("inline-text") || tag.IsEqual("x-inline-text");
+}
+
+bool IsRawTextContentElement(Element* element) {
+  return element &&
+         (element->is_raw_text() || element->GetTag().IsEqual("raw-text"));
+}
+
 bool IsExcludedAtomicSubtree(Element* element) {
   const auto& attributes = element->GetAttributesForWorklet();
   BASE_STATIC_STRING_DECL(kContentEditableAttribute, "contenteditable");
@@ -84,7 +97,7 @@ std::u16string CollectPlainTextFallback(Element* element) {
   if (!element) {
     return {};
   }
-  if (element->is_raw_text()) {
+  if (IsRawTextContentElement(element)) {
     return ElementText(element);
   }
 
@@ -139,24 +152,26 @@ void AppendElement(Element* element, editing::EditingProjection* projection,
         element->impl_id(), editing::EditingBlockBoundaryEdge::kLeading);
   }
 
-  if (element->is_raw_text()) {
+  if (IsRawTextContentElement(element)) {
     const int64_t owner_id =
         inherited_text_owner.value_or(element->impl_id());
     projection->AppendText(owner_id, ElementText(element), element->impl_id());
-  } else if (element->is_text()) {
+  } else if (element->is_text() || IsInlineTextElement(element)) {
     const int64_t owner_id =
         inherited_text_owner.value_or(element->impl_id());
     projection->AppendText(owner_id, ElementText(element), element->impl_id());
   }
 
   const std::optional<int64_t> text_owner =
-      element->is_text()
+      (element->is_text() || IsInlineTextElement(element))
           ? std::optional<int64_t>(
                 inherited_text_owner.value_or(element->impl_id()))
           : std::nullopt;
   for (const auto& child : element->children()) {
     const bool shares_text_owner =
-        text_owner && (child->is_text() || child->is_raw_text());
+        text_owner && (child->is_text() ||
+                       IsRawTextContentElement(child.get()) ||
+                       IsInlineTextElement(child.get()));
     AppendElement(child.get(), projection,
                   shares_text_owner ? text_owner : std::nullopt);
   }
@@ -183,7 +198,9 @@ editing::EditingProjection BuildEditingProjection(Element* host) {
       host->is_text() ? std::optional<int64_t>(host->impl_id()) : std::nullopt;
   for (const auto& child : host->children()) {
     const bool shares_host_owner =
-        host_owner && (child->is_text() || child->is_raw_text());
+        host_owner && (child->is_text() ||
+                       IsRawTextContentElement(child.get()) ||
+                       IsInlineTextElement(child.get()));
     AppendElement(child.get(), &projection,
                   shares_host_owner ? host_owner : std::nullopt);
   }

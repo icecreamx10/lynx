@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/include/fml/memory/weak_ptr.h"
+#include "base/include/fml/time/timer.h"
 #include "clay/lynx_adaptor/text_edit_context_geometry_clay.h"
 #include "clay/ui/component/editable/text_input_controller.h"
 #include "core/renderer/editing/editing_platform_contract.h"
@@ -69,6 +70,9 @@ class TextEditContextSessionClay final
   void UpdateRenderedSelection(
       const editing::EditingStateSnapshot& snapshot,
       const editing::EditingProjectionSnapshot& projection);
+  void RestartCaretBlink();
+  void StopCaretBlink();
+  void UpdateRenderedCaret();
   void HandleViewSelectionChanged(int64_t owner_id, int start, int end);
   void HandlePointerSelection(const clay::FloatPoint& point, bool extend);
   std::optional<size_t> MapViewOffsetToProjection(int64_t owner_id,
@@ -82,6 +86,8 @@ class TextEditContextSessionClay final
   std::vector<ClayEditingTextPlacement> text_placements_;
   std::unordered_set<int64_t> callback_owner_ids_;
   std::optional<size_t> pointer_anchor_;
+  std::unique_ptr<fml::RepeatingTimer> caret_timer_;
+  bool caret_visible_{false};
   bool applying_snapshot_{false};
   bool active_{false};
   fml::WeakPtrFactory<TextEditContextSessionClay> weak_factory_;

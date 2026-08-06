@@ -137,6 +137,25 @@ TEST(TextEditContextGeometryClayTest,
 }
 
 TEST(TextEditContextGeometryClayTest,
+     CaretOwnerUsesTrailingTextThenNextMountedText) {
+  editing::EditingProjectionSnapshot projection;
+  projection.length = 7;
+  projection.segments = {
+      {10, 100, editing::EditingSegmentKind::kText, u"abc", u"abc", 0, 3},
+      {20, -1, editing::EditingSegmentKind::kAtomicObject, u"\uFFFC", u"atom",
+       3, 4},
+      {30, 200, editing::EditingSegmentKind::kText, u"xyz", u"xyz", 4, 7},
+  };
+  const auto placements =
+      ResolveClayTextPlacements(projection, {{100, u"abc"}, {200, u"xyz"}}, {});
+
+  EXPECT_EQ(FindClayCaretOwner(placements, 0), 100);
+  EXPECT_EQ(FindClayCaretOwner(placements, 3), 100);
+  EXPECT_EQ(FindClayCaretOwner(placements, 4), 200);
+  EXPECT_EQ(FindClayCaretOwner(placements, 7), 200);
+}
+
+TEST(TextEditContextGeometryClayTest,
      ControllerExtendsSelectionAcrossTextOwnersAndBoundary) {
   editing::EditContextOptions options;
   options.text = u"a\nb";

@@ -103,6 +103,42 @@ TEST_P(EditingProjectionBuilderTest, SynchronizesControllerAtStateRevision) {
   EXPECT_EQ(controller->projection_revision(), controller->Snapshot().revision);
 }
 
+TEST_P(EditingProjectionBuilderTest, IncludesFiberInlineTextContent) {
+  auto page = manager->CreateFiberPage("page", 11);
+  auto host = manager->CreateFiberText("text");
+  auto inline_text = manager->CreateFiberText("text");
+  inline_text->SetAttribute("text", lepus::Value("frontend content"));
+  host->InsertNode(inline_text);
+  page->InsertNode(host);
+  page->FlushActionsAsRoot();
+
+  ASSERT_TRUE(inline_text->is_inline_element());
+  const editing::EditingProjection projection =
+      BuildEditingProjection(host.get());
+  ASSERT_EQ(projection.segments().size(), 1u);
+  EXPECT_EQ(projection.text(), u"frontend content");
+  EXPECT_EQ(projection.segments()[0].owner_id, host->impl_id());
+  EXPECT_EQ(projection.segments()[0].segment_id, inline_text->impl_id());
+}
+
+TEST_P(EditingProjectionBuilderTest, IncludesVirtualRawTextContent) {
+  auto page = manager->CreateFiberPage("page", 11);
+  auto host = manager->CreateFiberText("text");
+  auto raw_text = manager->CreateFiberNode("raw-text");
+  raw_text->SetAttribute("text", lepus::Value("react string child"));
+  host->InsertNode(raw_text);
+  page->InsertNode(host);
+  page->FlushActionsAsRoot();
+
+  EXPECT_EQ(raw_text->GetTag(), "raw-text");
+  const editing::EditingProjection projection =
+      BuildEditingProjection(host.get());
+  ASSERT_EQ(projection.segments().size(), 1u);
+  EXPECT_EQ(projection.text(), u"react string child");
+  EXPECT_EQ(projection.segments()[0].owner_id, host->impl_id());
+  EXPECT_EQ(projection.segments()[0].segment_id, raw_text->impl_id());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     EditingProjectionBuilderTestModule, EditingProjectionBuilderTest,
     ::testing::ValuesIn(fiber_element_generation_params));
