@@ -322,6 +322,13 @@ TEST_F_UI(TextSelectionTest, EditContextPointerDownSetsCaretAndDragExtends) {
 }
 #endif
 
+TEST_F_UI(TextSelectionTest, EditContextLeavesPrintableKeysForTextInput) {
+  const KeyEvent printable(0, KeyEventType::kDown, 0,
+                           static_cast<uint64_t>(KeyCode::kKeyZ), false, "z");
+
+  EXPECT_FALSE(text_view_->OnKeyEvent(&printable));
+}
+
 TEST_F_UI(TextSelectionTest,
           SetTextSelectionKeepsHandlesAtVisualSelectionEnds) {
   const std::u16string text = u"hello world";

@@ -257,10 +257,7 @@ void TextView::SetColor(Color color) {
 }
 
 bool TextView::OnKeyEvent(const KeyEvent* key_event) {
-  if (ApplyHotKey(key_event)) {
-    return false;
-  }
-  return true;
+  return ApplyHotKey(key_event);
 }
 
 bool TextView::ApplyHotKey(const KeyEvent* key_event) {

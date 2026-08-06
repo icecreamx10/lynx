@@ -592,6 +592,15 @@ void TextEditContextSessionClay::HandlePointerSelection(
   if (!session_ || !active_) {
     return;
   }
+  // AppKit makes the Clay view first responder after dispatching mouse down.
+  // Reassert the active text input client on the next UI task so subsequent
+  // key events continue through NSTextInputClient::insertText.
+  auto weak = weak_factory_.GetWeakPtr();
+  host_->page_view()->GetTaskRunner()->PostTask([weak]() {
+    if (weak && weak->active_ && weak->text_input_controller_) {
+      weak->text_input_controller_->Show();
+    }
+  });
   const auto state = session_->Snapshot();
   const auto projection = session_->ProjectionSnapshot();
   const editing::EditingLayoutPoint layout_point{point.x(), point.y()};
