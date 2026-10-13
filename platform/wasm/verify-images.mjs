@@ -7,11 +7,13 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 import http from 'node:http';
 const require=createRequire(import.meta.url);
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const out=path.resolve(process.env.PROBE_OUTPUT || 'out/Wasm/validation-images');
 await fs.mkdir(out,{recursive:true});
-const browser=await chromium.launch({executablePath:process.env.CHROME_PATH,headless:true,args:['--enable-unsafe-webgpu']});
+const isWebKit=process.env.PROBE_BROWSER==='webkit';
+const browser=await (isWebKit?webkit:chromium).launch(isWebKit?{headless:true}:{executablePath:process.env.CHROME_PATH,headless:true,args:['--enable-unsafe-webgpu']});
 const page=await browser.newPage({viewport:{width:1000,height:1200}});
+if(process.env.PROBE_NO_IMAGE_DECODER==='1')await page.addInitScript(()=>{Object.defineProperty(globalThis,'ImageDecoder',{value:undefined,configurable:true});});
 const errors=[],messages=[],checkpoints={};
 const fixtureSource=await fs.readFile('platform/wasm/app/src/image-fixtures.ts','utf8');
 const fixtures=JSON.parse(fixtureSource.slice(fixtureSource.indexOf('=')+1).trim().replace(/;$/,''));
@@ -228,7 +230,7 @@ try {
  checkpoints.network={passed:true,http404:true,corruptPngDecode:true,corsAllowed:true,corsDenied:true,
    replacePending:true,removePending:true,reloadPending:true,staleTextureRejected:true,idleAfterFiniteAnimation:true};
  console.log('PASS: HTTP/CORS/decode failures, slow request replacement/removal/reload and idle rendering');
- // No animated decoder: static images still load; GIF/WebP produce error events.
+ // No ImageDecoder: browser bitmap fallback must decode GIF/WebP and render.
  const unsupported=await browser.newPage();
  await unsupported.addInitScript(()=>{Object.defineProperty(globalThis,'ImageDecoder',{value:undefined,configurable:true});});
  const unavailableErrors=[];unsupported.on('pageerror',e=>unavailableErrors.push(String(e)));
@@ -236,11 +238,17 @@ try {
  await unsupported.waitForFunction(()=>{
    if(!window.lynxCanvas)return false;
    const r=JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[]));
-   return r.images.filter(i=>i.loaded).length===10 && r.images.filter(i=>i.failed).length===4;
+   return r.images.filter(i=>i.loaded).length===13 && r.images.filter(i=>i.failed).length===1;
  },null,{timeout:60000});
  assert.deepEqual(unavailableErrors,[]);assert.deepEqual(await unsupported.evaluate(()=>window.probeErrors),[]);
+ const fallbackInitial=await unsupported.evaluate(()=>({frames:JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).frames,images:window.lynxCanvas.lynxImages.inspect()}));
+ assert(fallbackInitial.images.filter(i=>i.animated).every(i=>i.backend==='browser-bitmap'));
+ await unsupported.waitForTimeout(1200);
+ const fallbackFinal=await unsupported.evaluate(()=>({frames:JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).frames,images:window.lynxCanvas.lynxImages.inspect()}));
+ assert(fallbackFinal.frames>fallbackInitial.frames+2);
+ assert(fallbackFinal.images.find(i=>i.type==='image/gif'&&i.autoplay).uploads>2);
  await unsupported.close();
- checkpoints.compatibility={passed:true,missingImageDecoder:'10 static loads; 3 animated failures plus broken image; no crash'};
+ checkpoints.compatibility={passed:true,missingImageDecoder:'13 successful loads, animated GIF/WebP advance through browser-bitmap fallback',frames:[fallbackInitial.frames,fallbackFinal.frames]};
  // Visible but slow rAF must advance images instead of dropping every interval.
  const slow=await browser.newPage();
  await slow.addInitScript(()=>{
@@ -259,10 +267,16 @@ try {
  assert.deepEqual(slowAfter.errors,[]);await slow.close();
  checkpoints.slowFrameClock={passed:true,intervalMilliseconds:300,
    frames:[slowBefore.frames,slowAfter.frames],uploads:[slowBefore.gif.uploads,slowAfter.gif.uploads]};
- assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);
+ // WebKit reports the deliberately denied CORS fixture as a page diagnostic
+ // even though fetch rejection is caught and delivered through binderror.
+ const expectedCors=isWebKit?errors.filter(e=>/^Fetch API cannot load http: ?\/+127\.0\.0\.1:6196\/no-cors\.png due to access control checks\.$/.test(e)):[];
+ assert(expectedCors.length<=3);
+ assert.deepEqual(errors.filter(e=>!expectedCors.includes(e)),[]);
+ checkpoints.network.expectedBrowserCorsDiagnostics=expectedCors.length;
+ assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);
  checkpoints.gpu={passed:true,errors:[],peakPendingFrames:(await read()).peakPendingFrames};
  console.log('PASS: source/removal/reload lifecycle and stale callback protection; no native or WebGPU errors');
- await fs.writeFile(path.join(out,'validation.json'),JSON.stringify({passed:true,checkpoints,report:await read(),browserImages:await inspect(),stats:await page.evaluate(()=>window.lynxCanvas.lynxImages.stats)},null,2));
+ await fs.writeFile(path.join(out,'validation.json'),JSON.stringify({passed:true,browser:await browser.version(),engine:isWebKit?'WebKit':'Chromium',checkpoints,report:await read(),browserImages:await inspect(),stats:await page.evaluate(()=>window.lynxCanvas.lynxImages.stats)},null,2));
 } catch(error) {
  await fs.writeFile(path.join(out,'validation.json'),JSON.stringify({passed:false,error:String(error),stack:error.stack,checkpoints,report:await read().catch(()=>null)},null,2));
  await page.screenshot({path:path.join(out,'failure.png')});throw error;

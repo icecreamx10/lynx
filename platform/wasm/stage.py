@@ -27,7 +27,7 @@ if "return binaryDecode(" not in module:
 module = re.sub(r"</script", r"<\\/script", module, flags=re.IGNORECASE)
 html = template.replace(marker, module + "\nglobalThis.createLynxCanvas = createLynxCanvas;")
 if args.target == 'bundle_canvas':
-    image_adapter = (root / 'platform/wasm/browser-images.js').read_text()
+    image_adapter = (root / 'platform/wasm/browser-bitmap-animation.js').read_text() + '\n' + (root / 'platform/wasm/browser-images.js').read_text()
     if html.count('/* LYNX_BROWSER_IMAGES */') != 1:
         raise RuntimeError('The bundle HTML must contain exactly one image adapter marker')
     image_adapter = re.sub(r'</script', r'<\\/script', image_adapter, flags=re.IGNORECASE)

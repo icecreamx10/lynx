@@ -35,10 +35,10 @@ globalThis.createLynxBrowserImages = function(module, device) {
   }
   function fail(r, error) {
     if (!live(r)) return;
-    r.failed=true; r.playing=false;
+    r.failed=true; r.playing=false; r.error=String(error.message || error);
     if(r.decoder) { r.decoder.close(); r.decoder=null; }
     stats.errors++;
-    call('image_complete',['number','string'],[r.token,String(error.message || error)]);
+    call('image_complete',['number','string'],[r.token,r.error]);
   }
   function upload(r, frame) {
     const width=frame.displayWidth || frame.width, height=frame.displayHeight || frame.height;
@@ -65,7 +65,7 @@ globalThis.createLynxBrowserImages = function(module, device) {
       if(!live(r) || (!initial && !r.autoplay)) return;
       if(upload(r,frame)) {
         r.index=index;
-        r.duration=Math.max(10,(frame.duration || 100000)/1000);
+        r.duration=Math.max(10,(result.duration || frame.duration || 100000)/1000);
         r.remaining=r.duration;
         r.lastTime=performance.now();
       }
@@ -87,10 +87,12 @@ globalThis.createLynxBrowserImages = function(module, device) {
       if(!live(r)) return;
       const f=format(bytes); r.type=f.type; r.animated=f.animated;
       if(f.animated) {
-        if(typeof ImageDecoder==='undefined' || !await ImageDecoder.isTypeSupported(f.type))
-          throw new Error('This browser cannot decode animated '+f.type);
+        const webcodecs=typeof ImageDecoder!=='undefined' && await ImageDecoder.isTypeSupported(f.type);
         if(!live(r)) return;
-        r.decoder=new ImageDecoder({data:bytes,type:f.type,preferAnimation:true});
+        r.backend=webcodecs?'webcodecs':'browser-bitmap';
+        r.decoder=webcodecs
+          ? new ImageDecoder({data:bytes,type:f.type,preferAnimation:true})
+          : createLynxBitmapAnimation(bytes,f.type,device.limits.maxTextureDimension2D);
         await r.decoder.tracks.ready;
         if(!live(r)) return;
         r.count=r.decoder.tracks.selectedTrack.frameCount;
@@ -151,8 +153,8 @@ globalThis.createLynxBrowserImages = function(module, device) {
       }
     },
     suspend() { for(const r of records.values()) r.lastTime=null; },
-    inspect() { return [...records.values()].map(r=>({token:r.token,type:r.type,
+    inspect() { return [...records.values()].map(r=>({token:r.token,type:r.type,backend:r.backend,
       animated:r.animated,index:r.index,count:r.count,loops:r.loops,uploads:r.uploads,
-      autoplay:r.autoplay,ended:r.ended,ready:r.ready,failed:r.failed,decoding:r.decoding})); }
+      autoplay:r.autoplay,ended:r.ended,ready:r.ready,failed:r.failed,error:r.error,decoding:r.decoding})); }
   };
 };

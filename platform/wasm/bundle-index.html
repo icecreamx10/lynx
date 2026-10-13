@@ -88,7 +88,12 @@ canvas { max-width:100%; height:auto; touch-action:none; }
       if (time-lastStatus > 250) {
         const result=JSON.parse(module.ccall('scene_report','string',[],[]));
         window.probeResult=result;
-        status.textContent='Lynx / QJS · '+result.nodes+' nodes · '+result.frames+' frames · GPU in flight: '+result.pendingFrames;
+        const animated=module.lynxImages.inspect().filter(image=>image.animated);
+        const backends=[...new Set(animated.map(image=>image.backend).filter(Boolean))];
+        const failures=animated.filter(image=>image.failed).map(image=>image.error);
+        status.textContent='Lynx / QJS · '+result.nodes+' nodes · '+result.frames+' frames · GPU in flight: '+result.pendingFrames
+          + (backends.length?'\n动图解码：'+backends.join(' / '):'')
+          + (failures.length?'\n动图加载失败：'+failures.join('; '):'');
         lastStatus=time;
       }
     }

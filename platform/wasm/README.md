@@ -2,9 +2,10 @@
 
 This experiment runs a compiled ReactLynx `.lynx.bundle` in WebAssembly and
 paints the native Lynx element tree into a browser canvas with Skity WebGPU.
-There is no Lynxtron, CEF, GTK, Node runtime, browser DOM layout or Canvas2D
-production renderer. Canvas2D is used only by the verification scripts to
-read back test pixels.
+There is no Lynxtron, CEF, GTK, Node runtime or browser DOM layout. The page
+renderer is Skity/WebGPU. Canvas2D is used for animation patch composition in
+the compatibility decoder, and for pixel readback by verification scripts; it
+does not lay out or render the Lynx page.
 
 ## Current capabilities
 
@@ -55,8 +56,14 @@ pixel copy; it does not promise zero copies inside the browser.
 - `bindload` fires once per request, with original `detail.width/height`.
   `binderror` fires once on HTTP/CORS/format/decode failures, with
   `detail.errMsg` and host `detail.error_code = -1`.
-- GIF and animated WebP use browser `ImageDecoder`. Only one frame is decoded
-  at a time, with its duration driving uploads on the existing rAF clock.
+- GIF and animated WebP prefer browser `ImageDecoder`. When it is absent or
+  lacks the format, a browser-bitmap compatibility decoder parses container
+  frame metadata, packages compressed patches as standalone GIF/WebP blobs and
+  asks `createImageBitmap` to decode them. Canvas2D handles partial rectangles,
+  alpha blending and disposal/restore; a composed bitmap enters the same Skity
+  WebGPU texture path. There is no JavaScript LZW/VP8 decoder or WASM codec.
+  Only one frame is decoded at a time, with its duration driving uploads on
+  the existing rAF clock.
   `autoplay=false` displays the first frame without starting playback;
   attribute changes pause/resume. `loop-count=0` means infinite; positive
   values stop on the last frame after the specified number of full loops.
@@ -76,9 +83,14 @@ pixel copy; it does not promise zero copies inside the browser.
   outside WASM and still consume memory. Per-node resources are retained while
   mounted; cross-node URL deduplication is not implemented.
 
-Animated playback requires `ImageDecoder` support for that format. When absent,
-static PNG/JPEG/WebP continue to work and animated sources emit `binderror`.
-APNG detection is present but is not part of the accepted format matrix.
+Animated GIF/WebP playback works without `ImageDecoder` when the browser can
+statically decode GIF/WebP and supports `createImageBitmap` + Canvas2D.
+The fallback caps animations at 4096 frames and allocates one composition
+canvas (plus a backup only for GIF restore-previous disposal). Decoded pixels
+remain outside WASM; these browser allocations still consume memory.
+APNG detection is present but is not part of the accepted format matrix;
+APNG currently requires a supported `ImageDecoder`. GIF plain-text graphics
+extensions are explicitly rejected by the compatibility decoder.
 Auto-size, placeholder, nine-patch, tint/blur, rounded clipping and selector
 animation methods are not implemented by this image adapter.
 
@@ -89,12 +101,18 @@ bash platform/wasm/build-images.sh
 python3 -m http.server 6096 --bind 127.0.0.1 --directory out/Wasm/images-site
 # In a separate shell, with Playwright and Chrome available:
 node platform/wasm/verify-images.mjs
+PROBE_NO_IMAGE_DECODER=1 PROBE_OUTPUT=out/Wasm/validation-images-bitmap node platform/wasm/verify-images.mjs
+node platform/wasm/verify-bitmap-animation.mjs
+# With Playwright WebKit installed, run the same end-to-end suite:
+PROBE_BROWSER=webkit PROBE_OUTPUT=out/Wasm/validation-images-webkit node platform/wasm/verify-images.mjs
+# Compare WebKit composition against the saved Chrome frame oracle:
+PROBE_BROWSER=webkit node platform/wasm/verify-bitmap-animation.mjs
 # After acceptance, publish only the local image preview subdirectory:
 python3 platform/wasm/stage.py --target bundle_canvas --site out/Wasm/site/images
 ```
 
-Optional environment variables: `PLAYWRIGHT_PATH`, `CHROME_PATH`, `PROBE_URL`
-and `PROBE_OUTPUT`. The verifier also binds a local CORS fixture server to
+Optional environment variables: `PLAYWRIGHT_PATH`, `CHROME_PATH`, `PROBE_URL`,
+`PROBE_OUTPUT`, `PROBE_BROWSER=webkit` and `PROBE_NO_IMAGE_DECODER=1`. The verifier also binds a local CORS fixture server to
 127.0.0.1:6196; it uses no public image services. The committed tiny data-URI
 fixtures can be regenerated with `generate-image-fixtures.py` (Pillow required).
 
@@ -107,12 +125,23 @@ updates, a 300 ms visible rAF clock, two-loop animated
 WebP, autoplay and hidden-page pause/resume, src replacement/removal/reload, HTTP 404,
 corrupt PNG decoding, allowed/denied CORS, cancelled pending requests,
 obsolete callbacks, idle rendering and absence of native/WebGPU errors.
-A second browser page checks the missing-ImageDecoder path. The existing
+A second browser page checks successful playback without ImageDecoder.
+The complete image suite also runs with ImageDecoder forcibly absent.
+`verify-bitmap-animation.mjs` compares every composed pixel, timing, repeated
+frame and two loops against Chrome ImageDecoder for normal and partial/alpha
+GIF/WebP fixtures, including GIF disposal 2/3 and local palettes. Its WebKit
+mode compares the same frame signatures against the saved Chrome oracle.
+The complete suite also passes on desktop WebKit 26.5 with ImageDecoder absent,
+including real bundle execution, Skity/WebGPU pixels, autonomous canvas redraw,
+Play/Pause and lifecycle checks. The three deliberately denied CORS fixture
+requests produce expected access-control page diagnostics in WebKit; all other
+page/runtime/WebGPU errors must remain absent. Physical iPhone acceptance
+still needs device verification. The existing
 interaction verifier was also run against this image-enabled host after loading
 the original interaction bundle: click pixels, ten counter updates, five-second
 rAF animation, reload and bounded GPU queue all passed. Acceptance uses
-macOS ARM64, Chrome 152 and Apple WebGPU/Metal; other browsers remain to be
-validated.
+macOS ARM64, Chrome 152, WebKit 26.5 and Apple WebGPU/Metal. Physical iPhone
+and other browser/device combinations remain to be validated.
 
 ## Limits
 
