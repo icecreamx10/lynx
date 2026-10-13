@@ -25,11 +25,51 @@ The default sample provides three independently verified paths:
    Only dirty pages submit GPU draws. Stopping animation or leaving the page
    unchanged stops drawing; the scheduler still observes browser frame ticks.
 
-Both QJS contexts currently execute asynchronously on **one browser thread**.
-This preserves separate runtime contexts and the framework message protocol,
-without requiring pthreads, shared WASM memory, or cross-origin isolation.
-Moving background execution to a Worker is future work. Heavy background JS
-can still block the browser in this version.
+## Execution threads
+
+MTS QJS, native elements, Starlight layout and Skity/WebGPU rendering execute on
+the browser main thread. BTS QJS executes on one persistent Emscripten pthread,
+backed by a real Web Worker. The worker's WASM instance shares linear memory
+with the main instance; C++ messages retain the Lynx runtime protocol rather
+than serializing values through JSON.
+
+- BTS construction, JS execution, timers, animation callbacks and destruction
+  run on its worker. The page's actor is recreated on bundle reload, while the
+  worker itself is reused. The UI never joins the worker during reload.
+- Browser FML loops record their owning pthread. Cross-thread wakeups proxy a
+  timer to that owner; user closures execute after returning to its event loop,
+  never inside the low-level system proxy queue.
+- BTS-to-MTS calls post to the main runner. Values backed by a QJS context are
+  converted to native Lepus values before crossing threads. Page lifetime
+  tokens discard retired callbacks before dereferencing an old host.
+- Browser rAF drives two separate frame clocks. MTS callbacks run on main;
+  BTS callbacks run on the worker. Worker tick signals coalesce to the latest
+  timestamp while BTS is busy, preventing a backlog of obsolete frames.
+- Image decoding/presentation remains on main, so GIF and main-thread input
+  can keep updating during a long BTS script. Other generic report/cache tasks
+  still use their caller's browser loop; this change isolates BTS specifically.
+
+The bundle host requires SharedArrayBuffer and cross-origin isolation:
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp`. `serve.py` sets these headers and
+`Cross-Origin-Resource-Policy: same-origin`. The self-contained module supplies
+a Blob URL for pthread startup; no public server or extra runtime files are
+needed. Worker startup failure is reported; there is no silent single-thread
+fallback. The separate eight-node static probe keeps its non-pthread build.
+
+Thread acceptance (`verify-bts-worker.mjs`) checks distinct thread IDs, one
+browser Worker and shared WASM memory; a real 1.2-second QuickJS busy script
+must leave main-thread drawing and MTS clicks responsive. BTS events wait and
+resume afterward. It also checks ten counter updates, worker rAF, stopping,
+reload while busy, and five repeated reloads without spawning more workers.
+The `test_bts_busy` export exists only as an experimental acceptance hook.
+
+```bash
+# build-images.sh also compiles the interaction fixture for this verifier.
+python3 platform/wasm/serve.py --port 6120 --site out/Wasm/images-site
+PROBE_URL=http://127.0.0.1:6120/ node platform/wasm/verify-bts-worker.mjs
+PROBE_BROWSER=webkit PROBE_URL=http://127.0.0.1:6120/ PROBE_OUTPUT=out/Wasm/validation-bts-worker-webkit node platform/wasm/verify-bts-worker.mjs
+```
 
 GPU surfaces are retained until their submission completes. Frame IDs allow
 releasing only the completed prefix, and the queue is capped at two frames.
@@ -98,7 +138,7 @@ Build and verify the image sample separately from the interaction preview:
 
 ```bash
 bash platform/wasm/build-images.sh
-python3 -m http.server 6096 --bind 127.0.0.1 --directory out/Wasm/images-site
+python3 platform/wasm/serve.py --port 6096 --site out/Wasm/images-site
 # In a separate shell, with Playwright and Chrome available:
 node platform/wasm/verify-images.mjs
 PROBE_NO_IMAGE_DECODER=1 PROBE_OUTPUT=out/Wasm/validation-images-bitmap node platform/wasm/verify-images.mjs
@@ -176,7 +216,7 @@ builds the native WASM host and stages the candidate separately under
 font, so it makes no separate runtime asset requests.
 
 ```bash
-python3 -m http.server 6093 --bind 127.0.0.1 --directory out/Wasm/bundle-site
+python3 platform/wasm/serve.py --port 6093 --site out/Wasm/bundle-site
 PLAYWRIGHT_PATH=/path/to/playwright CHROME_PATH=/path/to/chrome \
   node platform/wasm/verify-interactive.mjs
 
@@ -232,7 +272,8 @@ performance benchmark.
   these are experiment sizes, not production-size measurements.
 - Browser-only adaptations use the opt-in `enable_wasm_static_canvas` flag.
   Native platform builds keep their existing implementations.
-- Report tasks and worker tasks use the browser event loop. Bytecode caching
+- Generic report/cache tasks use their caller's browser event loop. BTS has its
+  dedicated pthread/Worker. Bytecode caching
   lives inside the WASM virtual `/tmp`, with no host filesystem access.
 
 The original eight-node component probe remains separately available:

@@ -1,0 +1,19 @@
+--- a/toolchain/wasm.gni
++++ b/toolchain/wasm.gni
+@@ -7,4 +7,5 @@
+ declare_args() {
+   # The location of an activated embedded emsdk.
+   emsdk_dir = rebase_path("//buildtools/emsdk")
++  wasm_enable_pthreads = false
+ }
+--- a/config/compiler/BUILD.gn
++++ b/config/compiler/BUILD.gn
+@@ -384,4 +384,8 @@
+   if (is_wasm) {
++    if (wasm_enable_pthreads) {
++      cflags += [ "-pthread" ]
++      ldflags += [ "-pthread" ]
++    }
+     ldflags += [
+       "-s",
+       "WASM=1",

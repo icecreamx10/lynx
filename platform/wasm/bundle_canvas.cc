@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <emscripten.h>
+#include <pthread.h>
 #include <webgpu/webgpu.h>
 
 #include <cmath>
@@ -334,7 +335,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
   writer.Key("peakPendingFrames");
   writer.Int(peak_pending);
   writer.Key("pendingCallbacks");
-  writer.Uint64(delegate->clock->Pending());
+  writer.Uint64(delegate->clock->Pending() +
+                (delegate->background ? delegate->background->Pending() : 0));
+  writer.Key("btsThread");
+  writer.Uint(lynx::tasm::BTSWorkerThreadId());
+  writer.Key("mainThread");
+  writer.Uint(reinterpret_cast<uintptr_t>(pthread_self()));
+  writer.Key("btsWorkerBusy");
+  writer.Bool(delegate->background && delegate->background->Busy());
   writer.Key("bundleSequence");
   writer.Int(bundle_sequence);
   writer.Key("bundleBytes");
@@ -442,13 +450,21 @@ extern "C" EMSCRIPTEN_KEEPALIVE int needs_frame() {
 extern "C" EMSCRIPTEN_KEEPALIVE int host_error_count() {
   return delegate ? delegate->errors.size() : 0;
 }
+extern "C" EMSCRIPTEN_KEEPALIVE void test_bts_busy(int milliseconds) {
+  if (delegate && delegate->background && milliseconds > 0 &&
+      milliseconds <= 3000)
+    delegate->background->TestBusy(milliseconds);
+}
 extern "C" EMSCRIPTEN_KEEPALIVE void tick(double milliseconds) {
   if (images) {
     images->Sync(root);
     images->Tick(milliseconds);
   }
-  if (delegate)
-    delegate->clock->Tick(static_cast<int64_t>(milliseconds * 1000000));
+  if (delegate) {
+    const auto time = static_cast<int64_t>(milliseconds * 1000000);
+    delegate->clock->Tick(time);
+    if (delegate->background) delegate->background->Tick(time);
+  }
 }
 namespace {
 tasm::Element* HitTest(tasm::Element* node, float px, float py, float parent_x,

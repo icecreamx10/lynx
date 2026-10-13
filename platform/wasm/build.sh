@@ -10,12 +10,15 @@ cd "$probe_root"
 : "${LYNX_WASM_EMSDK:?Set LYNX_WASM_EMSDK to an activated Emscripten 4.0.20 SDK}"
 source "$LYNX_WASM_EMSDK/emsdk_env.sh" >/dev/null 2>&1
 python3 platform/wasm/prepare.py
+probe_thread_flags=""
+if [[ "${PROBE_TARGET:-static_canvas}" == "bundle_canvas" ]]; then probe_thread_flags="-pthread"; fi
 if [[ "${PROBE_TARGET:-static_canvas}" == "bundle_canvas" ]]; then
   python3 tools/error_code/gen_error_code.py -l cpp
   python3 tools/feature_count/generate_feature_count.py
 fi
 emcmake cmake -S out/skity-source -B out/skity-wasm -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DCMAKE_C_FLAGS="$probe_thread_flags" -DCMAKE_CXX_FLAGS="$probe_thread_flags" \
   -DSKITY_GL_BACKEND=OFF -DSKITY_MTL_BACKEND=OFF -DSKITY_VK_BACKEND=OFF \
   -DSKITY_CODEC_MODULE=OFF -DSKITY_IO_MODULE=OFF -DSKITY_SW_RENDERER=ON
 cmake --build out/skity-wasm -j "${PROBE_JOBS:-8}"
@@ -25,6 +28,7 @@ import json
 import os
 from pathlib import Path
 sdk = str(Path(os.environ['LYNX_WASM_EMSDK']).resolve())
+threaded = os.environ.get('PROBE_TARGET') == 'bundle_canvas'
 Path('out/Wasm/args.gn').write_text('''target_cpu = "wasm"
 is_debug = false
 jsengine_type = "quickjs"
@@ -37,7 +41,7 @@ enable_logbox = false
 use_sysroot = false
 enable_lto = false
 enable_wasm_static_canvas = true
-emsdk_dir = ''' + json.dumps(sdk) + '\n')
+emsdk_dir = ''' + json.dumps(sdk) + '\nwasm_enable_pthreads = ' + str(threaded).lower() + '\n')
 PY
 buildtools/gn/gn gen out/Wasm
 probe_ninja="$(command -v ninja || true)"

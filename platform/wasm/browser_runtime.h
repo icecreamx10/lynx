@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 #ifndef PLATFORM_WASM_BROWSER_RUNTIME_H_
 #define PLATFORM_WASM_BROWSER_RUNTIME_H_
+#include <atomic>
 #include <map>
 #include <memory>
 #include <vector>
@@ -14,9 +15,11 @@ class BrowserFrameClock : public runtime::IVSyncObserver {
   using Callback = base::MoveOnlyClosure<void, int64_t, int64_t>;
   void RequestAnimationFrame(uintptr_t id, Callback cb) override {
     callbacks_[id] = std::move(cb);
+    pending_ = callbacks_.size() + before_.size();
   }
   void RequestBeforeAnimationFrame(uintptr_t id, Callback cb) override {
     before_[id] = std::move(cb);
+    pending_ = callbacks_.size() + before_.size();
   }
   void RegisterAfterAnimationFrameListener(Callback cb) override {
     after_.push_back(std::make_shared<Callback>(std::move(cb)));
@@ -26,14 +29,16 @@ class BrowserFrameClock : public runtime::IVSyncObserver {
     before_.clear();
     auto callbacks = std::move(callbacks_);
     callbacks_.clear();
+    pending_ = 0;
     for (auto& p : before) p.second(time, time + 16666667);
     for (auto& p : callbacks) p.second(time, time + 16666667);
     auto after = after_;
     for (auto& cb : after) (*cb)(time, time + 16666667);
   }
-  size_t Pending() const { return callbacks_.size() + before_.size(); }
+  size_t Pending() const { return pending_.load(); }
 
  private:
+  std::atomic<size_t> pending_{0};
   std::map<uintptr_t, Callback> callbacks_, before_;
   std::vector<std::shared_ptr<Callback>> after_;
 };

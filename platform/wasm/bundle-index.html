@@ -33,7 +33,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
 <pre id="status">正在加载内置示例…</pre>
 
 <script>Error.stackTraceLimit = 80;</script>
-<script>
+<script id="lynx-wasm-module">
 /* LYNX_WASM_MODULE */
 </script>
 <script>
@@ -92,6 +92,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
         const backends=[...new Set(animated.map(image=>image.backend).filter(Boolean))];
         const failures=animated.filter(image=>image.failed).map(image=>image.error);
         status.textContent='Lynx / QJS · '+result.nodes+' nodes · '+result.frames+' frames · GPU in flight: '+result.pendingFrames
+          + '\nBTS：Worker · MTS / 布局 / 绘制：主线程'
           + (backends.length?'\n动图解码：'+backends.join(' / '):'')
           + (failures.length?'\n动图加载失败：'+failures.join('; '):'');
         lastStatus=time;
@@ -167,7 +168,9 @@ canvas { max-width:100%; height:auto; touch-action:none; }
       window.probeErrors.push(event.error.message);
       status.textContent = 'GPU error: ' + event.error.message;
     });
-    const module = await globalThis.createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
+    if(!crossOriginIsolated)throw new Error('BTS Worker requires COOP/COEP response headers and SharedArrayBuffer.');
+    const workerModuleURL=URL.createObjectURL(new Blob([document.querySelector('#lynx-wasm-module').textContent],{type:'application/javascript'}));
+    const module = await globalThis.createLynxCanvas({ mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
     module.lynxImages = createLynxBrowserImages(module, device);
     const code = module.ccall('main', 'number', [], []);

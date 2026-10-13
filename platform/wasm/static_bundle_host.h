@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 #ifndef PLATFORM_WASM_STATIC_BUNDLE_HOST_H_
 #define PLATFORM_WASM_STATIC_BUNDLE_HOST_H_
+#include <atomic>
 #include <cstdio>
 
 #include "base/include/fml/message_loop.h"
@@ -14,10 +15,10 @@
 #include "core/runtime/js/runtime_constant.h"
 #include "core/shell/runtime/bts/bts_runtime.h"
 #include "core/value_wrapper/value_impl_lepus.h"
+#include "platform/wasm/browser_bts_worker.h"
 #include "platform/wasm/browser_runtime.h"
 namespace lynx::tasm {
-// Static first-paint host. Native modules, background JS, interaction and
-// asynchronous resources are deliberately not implemented by this adapter.
+// Main-thread canvas host. BTS executes through a dedicated worker actor.
 class StaticBundleDelegate : public TemplateAssembler::Delegate,
                              public ElementManager::Delegate {
  public:
@@ -26,8 +27,9 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
     return {};
   }
   TemplateAssembler* owner = nullptr;
-  std::shared_ptr<bool> alive = std::make_shared<bool>(true);
-  std::unique_ptr<shell::BTSRuntime> background;
+  std::shared_ptr<std::atomic<bool>> alive =
+      std::make_shared<std::atomic<bool>>(true);
+  std::unique_ptr<BrowserBTSWorker> background;
   std::shared_ptr<BrowserFrameClock> clock =
       std::make_shared<BrowserFrameClock>();
   bool background_ready = false;

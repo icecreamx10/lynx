@@ -11,12 +11,25 @@
 namespace lynx::runtime {
 class BrowserBTSDelegate : public TemplateDelegate {
  public:
-  explicit BrowserBTSDelegate(tasm::StaticBundleDelegate* host) : host_(host) {}
+  BrowserBTSDelegate(tasm::StaticBundleDelegate* host,
+                     std::shared_ptr<std::atomic<bool>> life,
+                     fml::RefPtr<fml::TaskRunner> main_runner,
+                     std::shared_ptr<tasm::BrowserFrameClock> clock)
+      : host_(host),
+        host_alive_(std::move(life)),
+        main_runner_(std::move(main_runner)),
+        clock_(std::move(clock)) {}
   ~BrowserBTSDelegate() override { *alive_ = false; }
   void Post(base::closure task) {
     fml::MessageLoop::GetCurrent().GetTaskRunner()->PostTask(
         [alive = alive_, task = std::move(task)]() mutable {
           if (*alive) task();
+        });
+  }
+  void PostMain(base::closure task) {
+    main_runner_->PostTask(
+        [life = host_alive_, task = std::move(task)]() mutable {
+          if (*life) task();
         });
   }
   static std::string ReadCore() {
@@ -26,10 +39,11 @@ class BrowserBTSDelegate : public TemplateDelegate {
   void OnRuntimeGC(
       std::unordered_map<std::string, std::string> mem_info) override {}
   void UpdateDataByJS(UpdateDataTask task) override {
-    Post([this, task = std::move(task)]() mutable {
-      if (host_->owner) {
+    task.data_ = lepus::Value::Clone(task.data_).ToLepusValue(true);
+    PostMain([host = host_, task = std::move(task)]() mutable {
+      if (host->owner) {
         auto options = task.pipeline_options_;
-        host_->owner->UpdateDataByJS(task, options);
+        host->owner->UpdateDataByJS(task, options);
       }
     });
   }
@@ -64,9 +78,13 @@ class BrowserBTSDelegate : public TemplateDelegate {
       const std::string& url,
       const std::shared_ptr<runtime::ResponsePromise<tasm::BundleResourceInfo>>&
           response_promise) override {}
-  void OnRuntimeReady() override { host_->background_ready = true; }
+  void OnRuntimeReady() override {
+    PostMain([host = host_] { host->background_ready = true; });
+  }
   void OnErrorOccurred(base::LynxError error) override {
-    host_->OnErrorOccurred(std::move(error));
+    PostMain([host = host_, error = std::move(error)]() mutable {
+      host->OnErrorOccurred(std::move(error));
+    });
   }
   void OnModuleMethodInvoked(const std::string& module,
                              const std::string& method, int32_t code) override {
@@ -130,14 +148,15 @@ class BrowserBTSDelegate : public TemplateDelegate {
   void InvokeLepusComponentCallback(const int64_t callback_id,
                                     const std::string& entry_name,
                                     const lepus::Value& data) override {
-    Post([this, callback_id, entry_name, data]() {
-      if (host_->owner)
-        host_->owner->InvokeLepusComponentCallback(callback_id, entry_name,
-                                                   data);
+    PostMain([host = host_, callback_id, entry_name,
+              data = lepus::Value::Clone(data).ToLepusValue(true)]() {
+      if (host->owner)
+        host->owner->InvokeLepusComponentCallback(callback_id, entry_name,
+                                                  data);
     });
   }
   std::shared_ptr<runtime::IVSyncObserver> GetVSyncObserver() override {
-    return host_->clock;
+    return clock_;
   }
   void SetCSSVariables(
       const std::string& component_id, const std::string& id_selector,
@@ -152,9 +171,11 @@ class BrowserBTSDelegate : public TemplateDelegate {
   void StopRecording(const lepus::Value& value) override {}
   void CallLepusMethod(const std::string& method_name, lepus::Value value,
                        const runtime::js::ApiCallBack& callback) override {
-    Post([this, method_name, value = std::move(value), callback]() mutable {
-      if (host_->owner)
-        host_->owner->CallLepusMethod(method_name, std::move(value), callback);
+    PostMain([host = host_, method_name,
+              value = lepus::Value::Clone(value).ToLepusValue(true),
+              callback]() mutable {
+      if (host->owner)
+        host->owner->CallLepusMethod(method_name, std::move(value), callback);
     });
   }
   fml::RefPtr<tasm::PropBundle> CreatePropBundle() override {
@@ -194,8 +215,8 @@ class BrowserBTSDelegate : public TemplateDelegate {
         event->GetTargetType(),
         std::make_unique<pub::ValueImplLepus>(std::move(payload)));
 
-    Post([this, event = std::move(event)]() mutable {
-      if (host_->owner) host_->owner->OnReceiveMessageEvent(std::move(event));
+    PostMain([host = host_, event = std::move(event)]() mutable {
+      if (host->owner) host->owner->OnReceiveMessageEvent(std::move(event));
     });
     return {event::EventCancelType::kNotCanceled, true};
   }
@@ -205,6 +226,9 @@ class BrowserBTSDelegate : public TemplateDelegate {
 
  private:
   tasm::StaticBundleDelegate* host_;
+  std::shared_ptr<std::atomic<bool>> host_alive_;
+  fml::RefPtr<fml::TaskRunner> main_runner_;
+  std::shared_ptr<tasm::BrowserFrameClock> clock_;
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 }  // namespace lynx::runtime

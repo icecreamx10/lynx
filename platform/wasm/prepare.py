@@ -78,6 +78,7 @@ def main():
     for name in ["build", "third_party/quickjs/src", "third_party/modp_b64"]:
         declared_dependency(ROOT, name, deps[name])
     apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm.patch")
+    apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm-threads.patch")
 
     shared = runpy.run_path(str(ROOT / "dependencies/DEPS.tools_shared"),
                            init_globals={"root_dir": str(ROOT)})["deps"]

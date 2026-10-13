@@ -44,6 +44,11 @@ try {
  await page.goto(process.env.PROBE_URL || 'http://127.0.0.1:6093/',{waitUntil:'networkidle'});
  await page.waitForFunction(()=>window.probeResult || window.probeErrors?.length,{timeout:60000});
  assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);
+ if(process.env.PROBE_INITIAL_BUNDLE){
+   await page.locator('#bundle-file').setInputFiles(path.resolve(process.env.PROBE_INITIAL_BUNDLE));
+   await page.locator('#load-bundle').click();
+   await page.waitForFunction(()=>document.querySelector('#load-status').dataset.state==='success');
+ }
  await page.waitForTimeout(400);
  const initial=await read(); assert.deepEqual(initial.errors,[]);assert.equal(initial.backgroundRuntime,true);
  assert(texts(initial).includes('Count: 0'));
@@ -85,7 +90,7 @@ try {
  assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);assert.deepEqual(errors,[]);assert.equal(requests.length,1);
  // Reload while an animation is active, then verify no stale callbacks leak.
  await click(620,215);await waitText('Stop animation');await page.waitForTimeout(100);
- await page.locator('#bundle-file').setInputFiles(path.resolve('platform/wasm/app/dist/main.lynx.bundle'));
+ await page.locator('#bundle-file').setInputFiles(path.resolve(process.env.PROBE_INITIAL_BUNDLE || 'platform/wasm/app/dist/main.lynx.bundle'));
  await page.locator('#load-bundle').click();await page.waitForFunction(()=>document.querySelector('#load-status').dataset.state==='success');
  await waitText('Count: 0');await waitText('Start animation');await page.waitForTimeout(250);
  const reloaded=await read();const reloadedFrames=reloaded.frames;await page.waitForTimeout(600);assert.equal((await read()).frames,reloadedFrames);

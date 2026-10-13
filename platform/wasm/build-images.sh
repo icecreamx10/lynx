@@ -9,6 +9,8 @@ cd "$image_root/platform/wasm/app"
 npm ci --ignore-scripts --no-audit --no-fund
 LYNX_CANVAS_IMAGE_LIFECYCLE=1 npm run build
 cp dist/main.lynx.bundle "$image_root/out/Wasm/image-lifecycle.lynx.bundle"
+LYNX_CANVAS_IMAGE_LIFECYCLE=0 LYNX_CANVAS_IMAGES=0 LYNX_CANVAS_INTERACTIVE=1 npm run build
+cp dist/main.lynx.bundle "$image_root/out/Wasm/interactive-worker.lynx.bundle"
 LYNX_CANVAS_IMAGE_LIFECYCLE=0 LYNX_CANVAS_IMAGES=1 npm run build
 cd "$image_root"
 python3 tools/error_code/gen_error_code.py -l ts
