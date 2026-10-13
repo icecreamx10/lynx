@@ -61,7 +61,9 @@ pixel copy; it does not promise zero copies inside the browser.
   attribute changes pause/resume. `loop-count=0` means infinite; positive
   values stop on the last frame after the specified number of full loops.
   `bindstartplay`, `bindcurrentloopcomplete` and `bindfinalloopcomplete` use
-  real Lynx custom events. Hidden pages pause the playback clock.
+  real Lynx custom events. Hidden pages pause the playback clock. Visible slow
+  frames still advance images; long elapsed intervals are capped rather than
+  discarded, so a 300 ms rAF interval cannot freeze playback.
 - Removing a node, clearing/changing `src` or accepting a new bundle cancels
   its fetch and decoder. Monotonic request tokens reject obsolete callbacks.
   Submitted GPU frames retain their sampled images until completion.
@@ -100,7 +102,8 @@ Acceptance writes `out/Wasm/validation-images/validation.json`, `canvas.png`,
 `browser.png` and `console.json`. It checks actual GPU pixels for all three
 static formats, landscape and portrait fit/fill, alpha blending, real React
 load/error payloads (including a main-thread load handler) and event counts,
-GIF frame changes, two-loop animated
+autonomous browser-composited GIF frame changes without forced draws or React
+updates, a 300 ms visible rAF clock, two-loop animated
 WebP, autoplay and hidden-page pause/resume, src replacement/removal/reload, HTTP 404,
 corrupt PNG decoding, allowed/denied CORS, cancelled pending requests,
 obsolete callbacks, idle rendering and absence of native/WebGPU errors.

@@ -133,9 +133,11 @@ globalThis.createLynxBrowserImages = function(module, device) {
         if(!r.playing) {r.playing=true; event(r,'startplay');}
         if(r.lastTime===null) {r.lastTime=time;continue;}
         const elapsed=time-r.lastTime; r.lastTime=time;
-        // Hidden tabs and suspended browsers resume without a catch-up burst.
-        if(elapsed<0 || elapsed>250) continue;
-        r.remaining-=elapsed;
+        // Visibility changes reset lastTime in suspend(). A visible but slow
+        // rAF must still advance: dropping intervals >250 ms freezes every
+        // image when the host stays below 4 FPS. Clamp catch-up instead.
+        if(elapsed<0) continue;
+        r.remaining-=Math.min(elapsed,250);
         if(r.remaining>0) continue;
         let next=r.index+1;
         if(next>=r.count) {

@@ -47,6 +47,17 @@ const snapshot=()=>page.evaluate(async samples=>{
  window.pauseLynxFramePump=false;
  return {pixels,png};
 },samplePoints);
+// Capture browser-composited pixels without calling render_scene/render_frame.
+// A forced validation draw would mask a broken invalidation/scheduling chain.
+const compositorPixels=async()=>{
+ const png=await page.locator('#canvas').screenshot();
+ return page.evaluate(async uri=>{
+   const bitmap=await createImageBitmap(await (await fetch(uri)).blob());
+   const c=document.createElement('canvas');c.width=bitmap.width;c.height=bitmap.height;
+   const ctx=c.getContext('2d');ctx.drawImage(bitmap,0,0);bitmap.close();
+   return {gif:[...ctx.getImageData(56,266,1,1).data],controlledGif:[...ctx.getImageData(306,266,1,1).data]};
+ },'data:image/png;base64,'+png.toString('base64'));
+};
 const pixel=(s,x,y)=>s.pixels[`${x},${y}`];
 const near=(actual,expected,tolerance=2)=>{for(let i=0;i<4;i++)assert(Math.abs(actual[i]-expected[i])<=tolerance,`pixel ${actual} != ${expected}`);};
 const at=(report,x,y)=>{
@@ -85,8 +96,19 @@ try {
  checkpoints.events={passed:true,successfulLoads:13,decodeErrors:1,dimensionsReturnedToReact:true,mainThreadLoad:true};
  console.log('PASS: PNG/JPEG/WebP, landscape + portrait fit/fill, premultiplied alpha and React load/error events');
  // Observe actual GIF pixels, not just a scheduler counter.
+ await page.waitForTimeout(700);
+ const automaticBefore=await read();
+ const automaticStatesBefore=await inspect();
  const animationPixels=[];
- for(let i=0;i<6;i++) {animationPixels.push(pixel(await snapshot(),55,265));await page.waitForTimeout(120);}
+ for(let i=0;i<6;i++) {animationPixels.push((await compositorPixels()).gif);await page.waitForTimeout(110);}
+ const automaticAfter=await read();
+ assert(automaticAfter.frames>automaticBefore.frames+2,'GIF did not autonomously submit canvas frames');
+ assert.deepEqual(texts(automaticAfter),texts(automaticBefore),'Another React update interfered with the autonomous GIF test');
+ const infiniteBefore=automaticStatesBefore.find(r=>r.type==='image/gif'&&r.autoplay);
+ const infiniteAfter=(await inspect()).find(r=>r.token===infiniteBefore.token);
+ assert(infiniteAfter.uploads>infiniteBefore.uploads+2);
+ checkpoints.autonomousFrames={passed:true,noForcedDraw:true,noReactUpdates:true,
+   frames:[automaticBefore.frames,automaticAfter.frames],uploads:[infiniteBefore.uploads,infiniteAfter.uploads]};
  assert(animationPixels.some(p=>p[0]>200 && p[2]<100));assert(animationPixels.some(p=>p[2]>200 && p[0]<100));
  await wait(()=>window.lynxCanvas.lynxImages.inspect().some(r=>r.type==='image/webp'&&r.animated&&r.ended));
  const states=await inspect();
@@ -219,6 +241,24 @@ try {
  assert.deepEqual(unavailableErrors,[]);assert.deepEqual(await unsupported.evaluate(()=>window.probeErrors),[]);
  await unsupported.close();
  checkpoints.compatibility={passed:true,missingImageDecoder:'10 static loads; 3 animated failures plus broken image; no crash'};
+ // Visible but slow rAF must advance images instead of dropping every interval.
+ const slow=await browser.newPage();
+ await slow.addInitScript(()=>{
+   window.requestAnimationFrame=cb=>setTimeout(()=>cb(performance.now()),300);
+   window.cancelAnimationFrame=token=>clearTimeout(token);
+ });
+ await slow.goto(process.env.PROBE_URL || 'http://127.0.0.1:6096/');
+ await slow.waitForFunction(()=>window.probeResult && window.lynxCanvas.lynxImages.inspect().filter(r=>r.ready).length===13,null,{timeout:60000});
+ const slowRead=()=>slow.evaluate(()=>({
+   frames:JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).frames,
+   gif:window.lynxCanvas.lynxImages.inspect().find(r=>r.type==='image/gif'&&r.autoplay),errors:window.probeErrors,
+ }));
+ const slowBefore=await slowRead();await slow.waitForTimeout(2000);const slowAfter=await slowRead();
+ assert(slowAfter.gif.uploads>slowBefore.gif.uploads+2,'300 ms rAF stopped GIF decoding');
+ assert(slowAfter.frames>slowBefore.frames+2,'300 ms rAF stopped canvas submissions');
+ assert.deepEqual(slowAfter.errors,[]);await slow.close();
+ checkpoints.slowFrameClock={passed:true,intervalMilliseconds:300,
+   frames:[slowBefore.frames,slowAfter.frames],uploads:[slowBefore.gif.uploads,slowAfter.gif.uploads]};
  assert.deepEqual(errors,[]);assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);
  checkpoints.gpu={passed:true,errors:[],peakPendingFrames:(await read()).peakPendingFrames};
  console.log('PASS: source/removal/reload lifecycle and stale callback protection; no native or WebGPU errors');
