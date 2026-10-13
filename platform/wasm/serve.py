@@ -21,7 +21,13 @@ if not ipaddress.ip_address(args.bind).is_loopback and not args.cert:
 directory = Path(__file__).resolve().parents[2] / "out/Wasm/site"
 if not directory.is_dir():
     parser.error("Build and stage the demo first")
-server = ThreadingHTTPServer((args.bind, args.port), partial(SimpleHTTPRequestHandler, directory=str(directory)))
+class PreviewHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+
+server = ThreadingHTTPServer((args.bind, args.port), partial(PreviewHandler, directory=str(directory)))
 if args.cert:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(args.cert, args.key)

@@ -12,12 +12,17 @@ pre { white-space: pre-wrap; max-width: 800px; }
 <pre id="status">Starting QuickJS + Lynx Starlight + Skity WebGPU…</pre>
 <p>This is a component integration probe. Full Lynx bundle loading and Clay UI are not included yet.</p>
 <script>Error.stackTraceLimit = 80;</script>
-<script src="static_canvas.js"></script>
+<script>
+/* LYNX_WASM_MODULE */
+</script>
 <script>
 (async () => {
   const status = document.querySelector('#status');
   window.probeErrors = [];
   try {
+    if (typeof globalThis.createLynxCanvas !== 'function') {
+      throw new Error('The embedded WASM loader is missing. Rebuild and stage this page.');
+    }
     if (!navigator.gpu) {
       if (!window.isSecureContext) throw new Error(
         'LAN HTTP needs a browser exception for WebGPU. In Chrome open ' +
@@ -35,7 +40,7 @@ pre { white-space: pre-wrap; max-width: 800px; }
       window.probeErrors.push(event.error.message);
       status.textContent = 'GPU error: ' + event.error.message;
     });
-    const module = await createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
+    const module = await globalThis.createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
     const code = module.ccall('main', 'number', [], []);
     if (code !== 0) throw new Error('WASM initialization failed: ' + code);

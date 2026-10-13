@@ -42,11 +42,12 @@ executable("static_canvas") {
     "-sSTACK_SIZE=2097152",
     "-sASSERTIONS=1",
     "-sEXPORT_NAME=createLynxCanvas",
+    "-sSINGLE_FILE=1",
     "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames']",
     "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString']",
-    "--preload-file",
+    "--embed-file",
     rebase_path("scene.js", root_build_dir) + "@/scene.js",
-    "--preload-file",
+    "--embed-file",
     rebase_path("//out/Roboto-Regular.ttf", root_build_dir) + "@/font.ttf",
   ]
   libs = [

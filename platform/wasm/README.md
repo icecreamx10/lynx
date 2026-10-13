@@ -35,8 +35,11 @@ bash platform/wasm/build.sh
 python3 platform/wasm/serve.py
 ```
 
-Open <http://127.0.0.1:6091/>. The server exposes only `out/Wasm/site`, containing
-the demo HTML, JS glue, WASM, preload data and font license.
+Open <http://127.0.0.1:6091/>. The server exposes only `out/Wasm/site`. The HTML
+embeds the JS factory, WASM, scene script and font data; rendering does not
+require any separate runtime asset requests. The font license is also staged.
+The server sends `Cache-Control: no-store` to avoid mixing old HTML and new
+runtime artifacts during this experiment.
 
 For LAN HTTP access:
 
@@ -65,6 +68,9 @@ errors and writes `validation.json`, `canvas.png` and `browser.png`.
 
 ```bash
 node platform/wasm/verify.mjs
+
+# Regression: block every request except the HTML document itself.
+PROBE_DOCUMENT_ONLY=1 node platform/wasm/verify.mjs
 
 # For LAN HTTP only, explicitly grant the origin to this test browser:
 PROBE_URL=http://YOUR_LAN_IP:6091/ \

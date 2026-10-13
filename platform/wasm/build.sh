@@ -38,9 +38,5 @@ buildtools/gn/gn gen out/Wasm
 probe_ninja="$(command -v ninja || true)"
 if [[ -z "$probe_ninja" ]]; then probe_ninja="$probe_root/buildtools/ninja/ninja"; fi
 "$probe_ninja" -C out/Wasm -j "${PROBE_JOBS:-8}" platform/wasm:static_canvas
-cp platform/wasm/index.html out/Wasm/index.html
-cp out/Roboto-OFL.txt out/Wasm/Roboto-OFL.txt
-mkdir -p out/Wasm/site
-cp out/Wasm/static_canvas.js out/Wasm/static_canvas.wasm out/Wasm/static_canvas.data \
-  platform/wasm/index.html out/Roboto-OFL.txt out/Wasm/site/
+python3 platform/wasm/stage.py
 printf 'Preview: python3 platform/wasm/serve.py\n'

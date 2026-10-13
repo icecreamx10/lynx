@@ -21,14 +21,21 @@ const page = await browser.newPage({ viewport: { width: 1000, height: 850 },
   ignoreHTTPSErrors: process.env.PROBE_LOCAL_CERT === '1' });
 const errors = [];
 const messages = [];
+const requests = [];
+page.on('request', request => requests.push(request.url()));
 page.on('pageerror', error => errors.push(error.stack || String(error)));
 page.on('console', message => messages.push({ type: message.type(), text: message.text() }));
 try {
+  if (process.env.PROBE_DOCUMENT_ONLY === '1') {
+    await page.route('**/*', route => route.request().resourceType() === 'document'
+      ? route.continue() : route.abort());
+  }
   await page.goto(process.env.PROBE_URL || 'http://127.0.0.1:6091/', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.probeResult || window.probeErrors?.length, { timeout: 60000 });
   const first = await page.evaluate(() => ({ result: window.probeResult, errors: window.probeErrors }));
   assert.deepEqual(first.errors, []);
   assert.deepEqual(errors, []);
+  if (process.env.PROBE_DOCUMENT_ONLY === '1') assert.equal(requests.length, 1);
   assert.equal(first.result.qjs, true);
   assert.equal(first.result.layout, 'lynx-starlight');
   assert.equal(first.result.renderer, 'skity-webgpu');
@@ -80,7 +87,7 @@ try {
   assert.deepEqual(errors, []);
   await page.screenshot({ path: path.join(out, 'browser.png') });
   const report = { passed: true, browser: browser.version(), first: first.result, repeated: repeats,
-    colors: pixels.colors, textLightPixels: pixels.lightPixels, cleanup, errors, gpuErrors, messages };
+    colors: pixels.colors, textLightPixels: pixels.lightPixels, cleanup, requests, errors, gpuErrors, messages };
   await fs.writeFile(path.join(out, 'validation.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
