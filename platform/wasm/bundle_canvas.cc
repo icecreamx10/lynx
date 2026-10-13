@@ -28,6 +28,7 @@
 #include "core/renderer/starlight/layout/layout_object.h"
 #include "core/renderer/starlight/style/layout_computed_style.h"
 #include "core/shell/runtime/mts/mts_runtime.h"
+#include "platform/wasm/browser_images.h"
 #include "platform/wasm/static_bundle_host.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
@@ -46,9 +47,11 @@ tasm::Element* root = nullptr;
 size_t bundle_bytes = 0;
 bool qjs_verified = false;
 std::unique_ptr<skity::GPUContext> gpu;
+std::unique_ptr<lynx::wasm::BrowserImages> images;
 struct FrameLease {
   int id;
   std::unique_ptr<skity::GPUSurface> surface;
+  std::vector<std::shared_ptr<skity::Image>> images;
 };
 std::deque<FrameLease> pending_surfaces;
 int submitted_frame = 0;
@@ -98,6 +101,10 @@ void PaintNode(skity::Canvas* canvas, tasm::Element& node, float parent_x,
         skity::Rect::MakeXYWH(x, y, bounds.size_.width_, bounds.size_.height_),
         paint);
   }
+  if (node.is_image() && images) {
+    images->Paint(canvas, static_cast<tasm::ImageElement&>(node), x, y,
+                  bounds.size_.width_, bounds.size_.height_);
+  }
   if (node.is_text()) {
     const std::string text = TextContent(&node);
     auto color = style->ExtractCanonicalComputedValue(tasm::kPropertyIDColor);
@@ -125,7 +132,8 @@ int CountNodes(tasm::Element* node) {
 
 bool ValidateStaticTree(tasm::Element* node, std::string& error) {
   const auto tag = node->GetTag().str();
-  if (tag != "page" && tag != "view" && tag != "text" && tag != "raw-text") {
+  if (tag != "page" && tag != "view" && tag != "text" && tag != "raw-text" &&
+      tag != "image" && tag != "wrapper") {
     error = "This static canvas host does not support element: " + tag;
     return false;
   }
@@ -210,6 +218,7 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   frame_count = 0;
   ++bundle_sequence;
   pointers.clear();
+  if (images) images->Reset();
   if (retired_delegate) retired_delegate->owner = nullptr;
   retired_assembler.reset();
   retired_delegate.reset();
@@ -255,6 +264,8 @@ void ReportElements(rapidjson::Writer<rapidjson::StringBuffer>& writer,
                     tasm::Element* node, float parent_x, float parent_y) {
   float x = parent_x, y = parent_y;
   writer.StartObject();
+  writer.Key("node");
+  writer.Int(node->impl_id());
   writer.Key("tag");
   writer.String(node->GetTag().c_str());
   if (node->is_text()) {
@@ -328,6 +339,30 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
   writer.Int(bundle_sequence);
   writer.Key("bundleBytes");
   writer.Uint64(bundle_bytes);
+  writer.Key("images");
+  writer.StartArray();
+  if (images)
+    for (const auto& [id, r] : images->records()) {
+      writer.StartObject();
+      writer.Key("node");
+      writer.Int(id);
+      writer.Key("token");
+      writer.Int(r->token);
+      writer.Key("width");
+      writer.Int(r->width);
+      writer.Key("height");
+      writer.Int(r->height);
+      writer.Key("loaded");
+      writer.Bool(r->loaded);
+      writer.Key("failed");
+      writer.Bool(r->failed);
+      writer.Key("uploads");
+      writer.Int(r->uploads);
+      writer.Key("loops");
+      writer.Int(r->loops);
+      writer.EndObject();
+    }
+  writer.EndArray();
   writer.Key("errors");
   writer.StartArray();
   for (const auto& error : delegate->errors) writer.String(error.c_str());
@@ -341,9 +376,29 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
   return report.c_str();
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE WGPUTexture image_allocate(int token, int width,
+                                                           int height) {
+  if (images) images->Sync(root);
+  return images ? images->Allocate(token, width, height) : nullptr;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void image_complete(int token,
+                                                    const char* error) {
+  if (images) {
+    images->Sync(root);
+    images->Complete(token, error ? error : "Image decode failed");
+  }
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void image_playback_event(int token,
+                                                          const char* name) {
+  if (images && name) {
+    images->Sync(root);
+    images->PlaybackEvent(token, name);
+  }
+}
 extern "C" EMSCRIPTEN_KEEPALIVE int render_scene() {
   if (!gpu || !root) return 1;
   if (pending_surfaces.size() >= 2) return 5;
+  images->Sync(root);
   WGPUSurfaceTexture current = WGPU_SURFACE_TEXTURE_INIT;
   wgpuSurfaceGetCurrentTexture(surface, &current);
   if (!current.texture) return 2;
@@ -364,7 +419,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE int render_scene() {
   PaintNode(canvas, *root, 0, 0);
   canvas->Flush();
   target->Flush();
-  pending_surfaces.push_back({++submitted_frame, std::move(target)});
+  pending_surfaces.push_back(
+      {++submitted_frame, std::move(target), images->Retain()});
   peak_pending =
       std::max(peak_pending, static_cast<int>(pending_surfaces.size()));
   delegate->dirty = false;
@@ -387,6 +443,10 @@ extern "C" EMSCRIPTEN_KEEPALIVE int host_error_count() {
   return delegate ? delegate->errors.size() : 0;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE void tick(double milliseconds) {
+  if (images) {
+    images->Sync(root);
+    images->Tick(milliseconds);
+  }
   if (delegate)
     delegate->clock->Tick(static_cast<int64_t>(milliseconds * 1000000));
 }
@@ -491,6 +551,14 @@ int main() {
   queue = wgpuDeviceGetQueue(device);
   gpu = skity::WebContextCreate(device, queue);
   if (!gpu) return 3;
+  images = std::make_unique<lynx::wasm::BrowserImages>(
+      gpu.get(), device,
+      [](const std::string& name, int tag, const lynx::lepus::Value& detail) {
+        if (assembler) assembler->SendCustomEvent(name, tag, detail, "detail");
+      },
+      [] {
+        if (delegate) delegate->dirty = true;
+      });
   auto instance = wgpuCreateInstance(nullptr);
   WGPUEmscriptenSurfaceSourceCanvasHTMLSelector selector =
       WGPU_EMSCRIPTEN_SURFACE_SOURCE_CANVAS_HTML_SELECTOR_INIT;

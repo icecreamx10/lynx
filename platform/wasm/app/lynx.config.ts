@@ -6,6 +6,14 @@ import { defineConfig } from '@lynx-js/rspeedy';
 import { pluginReactLynx } from '@lynx-js/react-rsbuild-plugin';
 export default defineConfig({
   plugins: [pluginReactLynx()],
-  source: { entry: process.env.LYNX_CANVAS_INTERACTIVE === '1' ? './src/interactive.tsx' : './src/index.tsx' },
+  source: {
+    entry: process.env.LYNX_CANVAS_IMAGE_LIFECYCLE === '1'
+      ? './src/image-lifecycle.tsx'
+      : process.env.LYNX_CANVAS_IMAGES === '1'
+        ? './src/images.tsx'
+        : process.env.LYNX_CANVAS_INTERACTIVE === '1'
+          ? './src/interactive.tsx'
+          : './src/index.tsx',
+  },
   output: { filename: 'main.lynx.bundle' },
 });

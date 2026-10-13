@@ -22,7 +22,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
 <section class="loader" aria-labelledby="loader-title">
   <h2 id="loader-title">加载本地 Lynx Bundle</h2>
   <p><strong>文件必须由 LynxJS 工具链编译生成</strong>，例如使用 <code>@lynx-js/rspeedy</code> 执行 <code>rspeedy build</code> 得到的 <code>.lynx.bundle</code>。</p>
-  <p class="hint">不能直接加载 JSX / TSX / JS 源码。当前实验版支持 view/text、点击事件、React 状态更新和 rAF 动画；文字仍限单行英文，复杂组件尚未接入。</p>
+  <p class="hint">不能直接加载 JSX / TSX / JS 源码。当前实验版支持 view/text/image、PNG/JPEG/WebP 静态图和 GIF/WebP 动图（需浏览器支持）、点击事件、React 状态更新和 rAF 动画；文字仍限单行英文，复杂组件尚未接入。</p>
   <div class="controls">
     <input id="bundle-file" type="file" accept=".lynx.bundle,.bundle" aria-label="选择 LynxJS 编译的 bundle" disabled>
     <button id="load-bundle" type="button" disabled>加载 bundle</button>
@@ -37,6 +37,9 @@ canvas { max-width:100%; height:auto; touch-action:none; }
 /* LYNX_WASM_MODULE */
 </script>
 <script>
+/* LYNX_BROWSER_IMAGES */
+</script>
+<script>
 (async () => {
   const status = document.querySelector('#status');
   window.probeErrors = [];
@@ -48,6 +51,9 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   let inFlight = 0;
   let pumping = false;
   let lastStatus = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) window.lynxCanvas?.lynxImages.suspend();
+  });
   const pointer = (type, event) => {
     if (!window.lynxCanvas || busy) return;
     const rect = canvas.getBoundingClientRect();
@@ -158,8 +164,9 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     });
     const module = await globalThis.createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
+    module.lynxImages = createLynxBrowserImages(module, device);
     const code = module.ccall('main', 'number', [], []);
-    if (code !== 0) throw new Error('WASM initialization failed: ' + code);
+    if (code !== 0) throw new Error('WASM initialization failed: ' + code + ': ' + module.ccall('bundle_load_error','string',[],[]));
     const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
     if (!result.frames) throw new Error('No rendered frame');
     await device.queue.onSubmittedWorkDone();

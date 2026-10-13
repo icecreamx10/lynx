@@ -41,13 +41,83 @@ bytes stay in the browser and enter WASM through its heap. Candidate pages are
 validated before replacing the current page; rejected files preserve the old
 interactive page. Reloading destroys its old runtimes and pending callbacks.
 
+## Browser-decoded images
+
+`<image>` loads static PNG/JPEG/WebP using browser `fetch` +
+`createImageBitmap`. The decoded bitmap is copied directly to a WebGPU RGBA
+texture, wrapped by Skity and drawn through `DrawImageRect`. No image codec
+libraries or decoded RGBA buffer are added to WASM. This avoids a browser-to-WASM
+pixel copy; it does not promise zero copies inside the browser.
+
+- Explicit element width/height; `aspectFit`, `aspectFill`, default
+  `scaleToFill` and `center`. Fit centers the entire image; fill crops the
+  source rectangle centrally. Transparent pixels use premultiplied alpha.
+- `bindload` fires once per request, with original `detail.width/height`.
+  `binderror` fires once on HTTP/CORS/format/decode failures, with
+  `detail.errMsg` and host `detail.error_code = -1`.
+- GIF and animated WebP use browser `ImageDecoder`. Only one frame is decoded
+  at a time, with its duration driving uploads on the existing rAF clock.
+  `autoplay=false` displays the first frame without starting playback;
+  attribute changes pause/resume. `loop-count=0` means infinite; positive
+  values stop on the last frame after the specified number of full loops.
+  `bindstartplay`, `bindcurrentloopcomplete` and `bindfinalloopcomplete` use
+  real Lynx custom events. Hidden pages pause the playback clock.
+- Removing a node, clearing/changing `src` or accepting a new bundle cancels
+  its fetch and decoder. Monotonic request tokens reject obsolete callbacks.
+  Submitted GPU frames retain their sampled images until completion.
+- HTTP(S), data and blob sources work within browser access rules. Relative
+  URLs resolve against the preview document, not the uploaded bundle's local
+  file location. External servers must allow CORS. Image support does not
+  turn the rest of the host into a general network resource loader.
+- Encoded images are limited to 32 MiB and decoded images to 16 million pixels
+  plus the device texture-dimension limit. Decoder/browser/GPU allocations are
+  outside WASM and still consume memory. Per-node resources are retained while
+  mounted; cross-node URL deduplication is not implemented.
+
+Animated playback requires `ImageDecoder` support for that format. When absent,
+static PNG/JPEG/WebP continue to work and animated sources emit `binderror`.
+APNG detection is present but is not part of the accepted format matrix.
+Auto-size, placeholder, nine-patch, tint/blur, rounded clipping and selector
+animation methods are not implemented by this image adapter.
+
+Build and verify the image sample separately from the interaction preview:
+
+```bash
+bash platform/wasm/build-images.sh
+python3 -m http.server 6096 --bind 127.0.0.1 --directory out/Wasm/images-site
+# In a separate shell, with Playwright and Chrome available:
+node platform/wasm/verify-images.mjs
+# After acceptance, publish only the local image preview subdirectory:
+python3 platform/wasm/stage.py --target bundle_canvas --site out/Wasm/site/images
+```
+
+Optional environment variables: `PLAYWRIGHT_PATH`, `CHROME_PATH`, `PROBE_URL`
+and `PROBE_OUTPUT`. The verifier also binds a local CORS fixture server to
+127.0.0.1:6196; it uses no public image services. The committed tiny data-URI
+fixtures can be regenerated with `generate-image-fixtures.py` (Pillow required).
+
+Acceptance writes `out/Wasm/validation-images/validation.json`, `canvas.png`,
+`browser.png` and `console.json`. It checks actual GPU pixels for all three
+static formats, landscape and portrait fit/fill, alpha blending, real React
+load/error payloads (including a main-thread load handler) and event counts,
+GIF frame changes, two-loop animated
+WebP, autoplay and hidden-page pause/resume, src replacement/removal/reload, HTTP 404,
+corrupt PNG decoding, allowed/denied CORS, cancelled pending requests,
+obsolete callbacks, idle rendering and absence of native/WebGPU errors.
+A second browser page checks the missing-ImageDecoder path. The existing
+interaction verifier was also run against this image-enabled host after loading
+the original interaction bundle: click pixels, ten counter updates, five-second
+rAF animation, reload and bounded GPU queue all passed. Acceptance uses
+macOS ARM64, Chrome 152 and Apple WebGPU/Metal; other browsers remain to be
+validated.
+
 ## Limits
 
 This is an experimental canvas host, not complete Lynx platform support.
-The renderer supports `view`/`text`, solid colors, fixed viewport layout and
+The renderer supports `view`/`text`/`image`, solid colors, fixed viewport layout and
 single-line ASCII text with Skity font metrics. Full text shaping, wrapping,
-images, rich text, scrolling, CSS transform/opacity/clipping, native modules,
-network resources, keyboard/IME and accessibility remain unsupported.
+rich text, scrolling, CSS transform/opacity/clipping, native modules,
+non-image network resources, keyboard/IME and accessibility remain unsupported.
 The demonstrated animation moves nodes through layout updates, rather than
 claiming a complete native CSS animation backend.
 

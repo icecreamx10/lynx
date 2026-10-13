@@ -26,6 +26,12 @@ if "return binaryDecode(" not in module:
     raise RuntimeError("Rebuild with SINGLE_FILE=1 before staging")
 module = re.sub(r"</script", r"<\\/script", module, flags=re.IGNORECASE)
 html = template.replace(marker, module + "\nglobalThis.createLynxCanvas = createLynxCanvas;")
+if args.target == 'bundle_canvas':
+    image_adapter = (root / 'platform/wasm/browser-images.js').read_text()
+    if html.count('/* LYNX_BROWSER_IMAGES */') != 1:
+        raise RuntimeError('The bundle HTML must contain exactly one image adapter marker')
+    image_adapter = re.sub(r'</script', r'<\\/script', image_adapter, flags=re.IGNORECASE)
+    html = html.replace('/* LYNX_BROWSER_IMAGES */', image_adapter)
 site = root / args.site
 site.mkdir(parents=True, exist_ok=True)
 temporary = site / "index.html.new"
