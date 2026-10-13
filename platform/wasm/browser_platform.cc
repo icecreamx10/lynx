@@ -8,6 +8,8 @@
 
 #include "core/base/threading/vsync_monitor.h"
 #include "core/renderer/tasm/config.h"
+#include "core/renderer/utils/lynx_env.h"
+#include "core/runtime/js/bytecode/js_cache_manager.h"
 
 namespace lynx::fml {
 // Browser main-thread names are not mutable through POSIX APIs.
@@ -44,3 +46,10 @@ std::shared_ptr<VSyncMonitor> VSyncMonitor::Create(bool on_ui) {
   return std::make_shared<BrowserVSyncMonitor>(on_ui);
 }
 }  // namespace lynx::base
+
+namespace lynx::tasm {
+bool LynxEnv::IsJsDebugEnabled(bool, bool) { return false; }
+}  // namespace lynx::tasm
+namespace lynx::runtime::js::cache {
+std::string JsCacheManager::GetPlatformCacheDir() { return "/tmp"; }
+}  // namespace lynx::runtime::js::cache

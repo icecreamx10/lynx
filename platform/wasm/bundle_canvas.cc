@@ -5,8 +5,10 @@
 #include <emscripten.h>
 #include <webgpu/webgpu.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <memory>
 #include <numeric>
@@ -14,12 +16,15 @@
 #include <skity/text/font.hpp>
 #include <skity/text/typeface.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "base/include/log/logging.h"
 #include "core/base/threading/task_runner_manufactor.h"
 #include "core/renderer/dom/fiber/page_element.h"
 #include "core/renderer/dom/fiber/raw_text_element.h"
 #include "core/renderer/dom/fiber/text_element.h"
+#include "core/renderer/events/touch_event_handler.h"
 #include "core/renderer/starlight/layout/layout_object.h"
 #include "core/renderer/starlight/style/layout_computed_style.h"
 #include "core/shell/runtime/mts/mts_runtime.h"
@@ -41,7 +46,20 @@ tasm::Element* root = nullptr;
 size_t bundle_bytes = 0;
 bool qjs_verified = false;
 std::unique_ptr<skity::GPUContext> gpu;
-std::vector<std::unique_ptr<skity::GPUSurface>> pending_surfaces;
+struct FrameLease {
+  int id;
+  std::unique_ptr<skity::GPUSurface> surface;
+};
+std::deque<FrameLease> pending_surfaces;
+int submitted_frame = 0;
+int peak_pending = 0;
+int event_count = 0;
+struct Pointer {
+  int target;
+  float x, y;
+  bool moved = false;
+};
+std::unordered_map<int, Pointer> pointers;
 std::shared_ptr<skity::Typeface> font;
 WGPUDevice device = nullptr;
 WGPUQueue queue = nullptr;
@@ -100,8 +118,6 @@ void PaintNode(skity::Canvas* canvas, tasm::Element& node, float parent_x,
 
 int CountNodes(tasm::Element* node) {
   int count = 1;
-  std::printf("element %s text=%s\n", node->GetTag().c_str(),
-              TextContent(node).c_str());
   for (auto* child = node->first_child(); child; child = child->next_sibling())
     count += CountNodes(child);
   return count;
@@ -139,6 +155,7 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   options.SetEmbeddedMode(static_cast<tasm::EmbeddedMode>(
       tasm::EMBEDDED_MODE_BASE | tasm::LAYOUT_IN_ELEMENT));
   options.SetLongTaskMonitorDisabled(true);
+  options.SetHasLogicExecutor(true);
   auto elements = std::make_unique<tasm::ElementManager>(
       std::make_unique<tasm::CanvasPaintingContext>(candidate_delegate->errors),
       candidate_delegate.get(), tasm::LynxEnvConfig(800, 500, 1.f, 1.f),
@@ -148,6 +165,7 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
       std::make_shared<tasm::CanvasPropBundleCreator>());
   auto candidate = std::make_unique<tasm::TemplateAssembler>(
       *candidate_delegate, std::move(elements), nullptr, id, false, options);
+  candidate_delegate->owner = candidate.get();
   candidate_manager->UpdateViewport(800, SLMeasureModeDefinite, 500,
                                     SLMeasureModeDefinite, false);
   auto pipeline = std::make_shared<tasm::PipelineOptions>();
@@ -168,6 +186,11 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
     return false;
   }
   if (!ValidateStaticTree(candidate_root, load_error)) return false;
+  candidate_delegate->StartBackground(id);
+  if (!candidate_delegate->errors.empty()) {
+    load_error = candidate_delegate->errors.front();
+    return false;
+  }
   const int count = CountNodes(candidate_root);
   if (count <= 1) {
     load_error = "The bundle did not produce any visible elements";
@@ -186,6 +209,8 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   qjs_verified = true;
   frame_count = 0;
   ++bundle_sequence;
+  pointers.clear();
+  if (retired_delegate) retired_delegate->owner = nullptr;
   retired_assembler.reset();
   retired_delegate.reset();
   return true;
@@ -242,6 +267,12 @@ void ReportElements(rapidjson::Writer<rapidjson::StringBuffer>& writer,
     const auto& bounds = node->slnode()->GetLayoutResult();
     x += bounds.offset_.X();
     y += bounds.offset_.Y();
+    auto color = node->computed_css_style()->ExtractCanonicalComputedValue(
+        tasm::kPropertyIDBackgroundColor);
+    if (color && color->kind() == sl::CanonicalComputedValue::Kind::kColor) {
+      writer.Key("background");
+      writer.Uint(std::get<uint32_t>(color->storage()));
+    }
     writer.Key("x");
     writer.Double(x);
     writer.Key("y");
@@ -282,9 +313,17 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
   writer.Key("bundleLoaded");
   writer.Bool(delegate->loaded);
   writer.Key("backgroundRuntime");
-  writer.Bool(false);
+  writer.Bool(delegate->background_ready);
   writer.Key("backgroundSourcePrepared");
   writer.Bool(delegate->background_source_prepared);
+  writer.Key("eventCount");
+  writer.Int(event_count);
+  writer.Key("pendingFrames");
+  writer.Uint64(pending_surfaces.size());
+  writer.Key("peakPendingFrames");
+  writer.Int(peak_pending);
+  writer.Key("pendingCallbacks");
+  writer.Uint64(delegate->clock->Pending());
   writer.Key("bundleSequence");
   writer.Int(bundle_sequence);
   writer.Key("bundleBytes");
@@ -304,6 +343,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
 
 extern "C" EMSCRIPTEN_KEEPALIVE int render_scene() {
   if (!gpu || !root) return 1;
+  if (pending_surfaces.size() >= 2) return 5;
   WGPUSurfaceTexture current = WGPU_SURFACE_TEXTURE_INIT;
   wgpuSurfaceGetCurrentTexture(surface, &current);
   if (!current.texture) return 2;
@@ -324,9 +364,77 @@ extern "C" EMSCRIPTEN_KEEPALIVE int render_scene() {
   PaintNode(canvas, *root, 0, 0);
   canvas->Flush();
   target->Flush();
-  pending_surfaces.push_back(std::move(target));
+  pending_surfaces.push_back({++submitted_frame, std::move(target)});
+  peak_pending =
+      std::max(peak_pending, static_cast<int>(pending_surfaces.size()));
+  delegate->dirty = false;
+  node_count = CountNodes(root);
   ++frame_count;
   return 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int render_frame() {
+  return render_scene() == 0 ? submitted_frame : -1;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void release_frames(int completed) {
+  while (!pending_surfaces.empty() && pending_surfaces.front().id <= completed)
+    pending_surfaces.pop_front();
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int needs_frame() {
+  return delegate && delegate->dirty;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int host_error_count() {
+  return delegate ? delegate->errors.size() : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void tick(double milliseconds) {
+  if (delegate)
+    delegate->clock->Tick(static_cast<int64_t>(milliseconds * 1000000));
+}
+namespace {
+tasm::Element* HitTest(tasm::Element* node, float px, float py, float parent_x,
+                       float parent_y) {
+  if (!node->slnode()) return nullptr;
+  const auto& b = node->slnode()->GetLayoutResult();
+  float x = parent_x + b.offset_.X(), y = parent_y + b.offset_.Y();
+  if (px < x || py < y || px >= x + b.size_.width_ || py >= y + b.size_.height_)
+    return nullptr;
+  std::vector<tasm::Element*> children;
+  for (auto* c = node->first_render_child(); c; c = c->next_render_sibling())
+    children.push_back(c);
+  for (auto i = children.rbegin(); i != children.rend(); ++i)
+    if (auto* result = HitTest(*i, px, py, x, y)) return result;
+  return node;
+}
+}  // namespace
+extern "C" EMSCRIPTEN_KEEPALIVE int dispatch_pointer(int type, int pointer,
+                                                     float x, float y,
+                                                     double timestamp) {
+  if (!root || !assembler || !std::isfinite(x) || !std::isfinite(y)) return 0;
+  auto* hit = HitTest(root, x, y, 0, 0);
+  if (type == 0) {
+    if (!hit) return 0;
+    pointers[pointer] = {hit->impl_id(), x, y, false};
+  }
+  auto it = pointers.find(pointer);
+  if (it == pointers.end()) return 0;
+  auto& p = it->second;
+  if (std::hypot(x - p.x, y - p.y) > 8.f) p.moved = true;
+  tasm::EventInfo info(p.target, x, y, x, y, x, y,
+                       static_cast<int64_t>(timestamp));
+  const char* name = type == 0   ? "touchstart"
+                     : type == 1 ? "touchmove"
+                     : type == 2 ? "touchend"
+                                 : "touchcancel";
+  assembler->SendTouchEvent(name, info);
+  ++event_count;
+  if (type == 2 && !p.moved && hit && hit->impl_id() == p.target) {
+    tasm::EventInfo tap(p.target, x, y, x, y, x, y,
+                        static_cast<int64_t>(timestamp));
+    assembler->SendTouchEvent("tap", tap);
+    ++event_count;
+  }
+  if (type >= 2) pointers.erase(pointer);
+  return 1;
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE void release_completed_frames() {
@@ -372,6 +480,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE int verify_corrupt_bundle() {
 }
 
 int main() {
+  // Per-update INFO logs overwhelm the browser console during long animations.
+  // Keep warnings/errors and the explicit structured host diagnostics.
+  lynx::base::logging::SetMinLogLevel(LYNX_LOG_LEVEL_WARNING);
   font = skity::Typeface::MakeFromFile("/font.ttf");
   if (!font) return 3;
   if (!LoadScene()) return 1;

@@ -6,6 +6,6 @@ import { defineConfig } from '@lynx-js/rspeedy';
 import { pluginReactLynx } from '@lynx-js/react-rsbuild-plugin';
 export default defineConfig({
   plugins: [pluginReactLynx()],
-  source: { entry: './src/index.tsx' },
+  source: { entry: process.env.LYNX_CANVAS_INTERACTIVE === '1' ? './src/interactive.tsx' : './src/index.tsx' },
   output: { filename: 'main.lynx.bundle' },
 });

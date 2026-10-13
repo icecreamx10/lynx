@@ -1,152 +1,145 @@
-# QuickJS / Starlight / WebGPU canvas probe
+# Lynx / QuickJS / WebGPU WASM canvas host
 
-This experiment compiles Lynx's pinned PrimJS/QuickJS engine and Starlight
-layout engine to WebAssembly, then paints their static scene with Skity's
-WebGPU backend into a browser canvas. It does not depend on Lynxtron, Node at
-runtime, CEF, GTK, browser DOM layout, or Canvas2D rendering.
+This experiment runs a compiled ReactLynx `.lynx.bundle` in WebAssembly and
+paints the native Lynx element tree into a browser canvas with Skity WebGPU.
+There is no Lynxtron, CEF, GTK, Node runtime, browser DOM layout or Canvas2D
+production renderer. Canvas2D is used only by the verification scripts to
+read back test pixels.
 
-## Scope
+## Current capabilities
 
-There are two independent targets:
+The default sample provides three independently verified paths:
 
-- `static_canvas`: the original component probe. A hand-written script in QJS
-  returns JSON, which a C++ adapter maps to Starlight nodes. Its report sets
-  `fullLynxBundle: false`.
-- `bundle_canvas`: a real ReactLynx JSX/CSS app, compiled by Rspeedy into
-  `main.lynx.bundle`. The WASM host calls `TemplateAssembler::LoadTemplate`,
-  uses the real LepusNG/QJS main-thread runtime, and lets ElementManager resolve
-  CSS and perform Starlight layout in `LAYOUT_IN_ELEMENT` mode. Skity paints the
-  resulting native element tree directly into WebGPU. The report checks the
-  runtime type and exposes the actual decoded text and layout tree.
+1. `main-thread:bindtap` changes a card's color inside the main-thread QJS
+   runtime. Browser pointer events are mapped into canvas coordinates, hit
+   tested against the native render tree and dispatched through Lynx's
+   `TemplateAssembler::SendTouchEvent` pipeline.
+2. Ordinary `bindtap` executes in a second QJS context, with the real Lynx
+   `BTSRuntime`, public-source `lynx_core.js` and ReactLynx background bundle.
+   `useState` updates return through Lynx messages and `CallLepusMethod` to
+   the original native element tree. Context-owned values are converted to
+   native Lepus values before crossing runtime boundaries.
+3. Browser rAF drives Lynx animation-frame callbacks. The sample uses React
+   state to move a native rectangle and update a text node continuously.
+   Only dirty pages submit GPU draws. Stopping animation or leaving the page
+   unchanged stops drawing; the scheduler still observes browser frame ticks.
 
-The browser UI includes a local `.lynx.bundle` file picker. Files must be
-compiled with the LynxJS toolchain (for example `@lynx-js/rspeedy`); JSX/TSX/JS
-source files are not loadable. The bytes stay in the browser and are passed to
-WASM through its heap. A candidate page is decoded and validated before it
-replaces the current page, so a rejected bundle preserves the existing display.
-The UI limits input to 64 MiB and reports loader/capability errors explicitly.
+Both QJS contexts currently execute asynchronously on **one browser thread**.
+This preserves separate runtime contexts and the framework message protocol,
+without requiring pthreads, shared WASM memory, or cross-origin isolation.
+Moving background execution to a Worker is future work. Heavy background JS
+can still block the browser in this version.
 
-**The bundle target supports static first paint, not a complete browser host.**
-Its compiled bundle includes background-thread JS, but that runtime is not
-executed (`backgroundRuntime: false`). Interactions, React background lifecycle,
-state updates, native modules, resources, IME and accessibility are not connected.
-The canvas adapter currently paints solid backgrounds and single-line ASCII text
-using Skity font metrics; it does not implement full text shaping, rich text,
-wrapping, clipping, images or Clay UI. The sample deliberately uses fixed sizes.
+GPU surfaces are retained until their submission completes. Frame IDs allow
+releasing only the completed prefix, and the queue is capped at two frames.
+At the pinned Skity revision its WebGPU surface consumes the supplied texture
+reference; the host transfers ownership and never releases that texture twice.
 
-Full `core:lynx_native` WASM compilation and linking now pass. The opt-in host
-uses browser timers for FML and a single-thread task queue; it does not silently
-start unsupported POSIX report or worker threads. Browser VSync is backed by
-requestAnimationFrame with a nominal frame budget. Platform configuration is
-`Web`; remote trail configuration and outbound telemetry are disabled by the
-existing default platform implementations.
+The local file picker accepts `.lynx.bundle` files compiled by the LynxJS
+toolchain, such as `@lynx-js/rspeedy`. JSX/TSX/JS source is rejected. Selected
+bytes stay in the browser and enter WASM through its heap. Candidate pages are
+validated before replacing the current page; rejected files preserve the old
+interactive page. Reloading destroys its old runtimes and pending callbacks.
 
-## Reproduce
+## Limits
 
-Requirements: Python 3.11+, Git, npm, CMake, Ninja, and activated Emscripten
-**4.0.20**. The dependency preparation script fetches public repositories at
-the revisions declared by Lynx and Skity, and applies their declared patches.
-It verifies existing revisions and does not reset existing checkouts.
+This is an experimental canvas host, not complete Lynx platform support.
+The renderer supports `view`/`text`, solid colors, fixed viewport layout and
+single-line ASCII text with Skity font metrics. Full text shaping, wrapping,
+images, rich text, scrolling, CSS transform/opacity/clipping, native modules,
+network resources, keyboard/IME and accessibility remain unsupported.
+The demonstrated animation moves nodes through layout updates, rather than
+claiming a complete native CSS animation backend.
+
+The viewport is 800 × 500. Pointer coordinates account for CSS canvas scaling;
+drags exceeding the tap threshold and canceled pointers do not generate taps.
+The paint and hit-test adapters currently use the render tree's order and
+untransformed rectangles. More complete clipping, transforms and stacking
+support must evolve together.
+
+## Build and preview
+
+Requirements: Python 3.11+, Node 20.11+, npm, Git, CMake, Ninja and activated
+Emscripten **4.0.20**. Public dependency revisions are checked before applying
+their declared patches. Existing checkouts are never reset by preparation.
 
 ```bash
 export LYNX_WASM_EMSDK=/absolute/path/to/emsdk
 bash platform/wasm/build-bundle.sh
-# After validating the candidate, promote it to the live preview:
+```
+
+This compiles the JSX/CSS sample, builds Lynx Core JS from this checkout,
+builds the native WASM host and stages the candidate separately under
+`out/Wasm/bundle-site`. The HTML embeds its loader, WASM, bundle, core JS and
+font, so it makes no separate runtime asset requests.
+
+```bash
+python3 -m http.server 6093 --bind 127.0.0.1 --directory out/Wasm/bundle-site
+PLAYWRIGHT_PATH=/path/to/playwright CHROME_PATH=/path/to/chrome \
+  node platform/wasm/verify-interactive.mjs
+
+# Promote only after validation:
 python3 platform/wasm/stage.py --target bundle_canvas
 python3 platform/wasm/serve.py
 ```
 
-The bundle script stages the candidate under `out/Wasm/bundle-site` first.
-Serve it locally for validation:
+For LAN HTTPS, supply a local certificate and its private key:
 
 ```bash
-python3 -m http.server 6093 --bind 127.0.0.1 --directory out/Wasm/bundle-site
-PROBE_BUNDLE=1 PROBE_DOCUMENT_ONLY=1 PROBE_URL=http://127.0.0.1:6093/ \
-  node platform/wasm/verify.mjs
+python3 platform/wasm/serve.py --bind YOUR_LAN_IP --port 6092 \
+  --cert /path/to/preview.crt --key /path/to/preview.key
 ```
 
-The original baseline is still reproducible with `bash platform/wasm/build.sh`.
+The server serves only `out/Wasm/site` and sends `Cache-Control: no-store`.
+It does not expose the source checkout. WebGPU requires a secure context;
+localhost HTTP works for development, while LAN access should use HTTPS.
+There is no public deployment or tunneling.
 
-Open <http://127.0.0.1:6091/>. The server exposes only `out/Wasm/site`. The HTML
-embeds the JS factory, WASM, bundle (or scene script) and font data; rendering does not
-require any separate runtime asset requests. The font license is also staged.
-The server sends `Cache-Control: no-store` to avoid mixing old HTML and new
-runtime artifacts during this experiment.
+## Acceptance
 
-For LAN HTTP access:
+`verify-interactive.mjs` verifies a real compiled bundle and writes
+`out/Wasm/validation-interactive/validation.json`, `browser.png` and
+`animation.png`. The gates are:
 
-```bash
-python3 platform/wasm/serve.py --bind YOUR_LAN_IP --port 6091
-```
+- A native main-thread click changes actual GPU pixels, then toggles back.
+- Ordinary `bindtap` + `useState` reaches ten successive increments.
+- Continuous animation changes native text and rectangle layout, with at
+  least 60 state updates and rendered frames over five seconds.
+- Stopping the animation stops frame submission; idle pages do not redraw.
+- Native GPU queue holds at most two frames; a third submission is rejected.
+  Completed-prefix release and repeated release leave the remaining lease intact.
+- CSS-scaled pointer coordinates work, and dragging does not trigger tap.
+- Reload during animation cancels the old page and resets the new counter.
+- Invalid bundle input preserves a page whose counter still works afterward.
+- No uncaught JS, native-runtime or WebGPU errors; only one document request.
 
-WebGPU normally requires a secure context. For this local HTTP experiment,
-each visiting Chrome browser must explicitly allow the exact origin:
+Verified locally with macOS ARM64, Chrome 152 and Apple WebGPU/Metal.
+The five-second animation checkpoint delivered 300 native state updates and
+300 new frames. This is a functional acceptance result, not a cross-device
+performance benchmark.
 
-1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
-2. Add `http://YOUR_LAN_IP:6091`, enable the option, and relaunch Chrome.
-3. Open the HTTP preview again.
+## Revisions and build scope
 
-Without that exception the page shows a clear explanation and does not fake
-the GPU result. HTTPS can alternatively be enabled with `--cert` and `--key`.
-No external hosting, tunneling or public deployment is involved.
-
-## Validate
-
-Install Playwright in your tooling environment. `CHROME_PATH` optionally selects
-a locally installed Chrome; `PLAYWRIGHT_PATH` can point to an existing Playwright
-package. The test checks actual pixel colors, visible text, 12 rendered frames,
-frame resource cleanup, and a subsequent 13th frame. It rejects WebGPU and WASM
-errors and writes `validation.json`, `canvas.png` and `browser.png`. With
-`PROBE_BUNDLE=1`, it also checks all six decoded text strings, CSS positions,
-LepusNG runtime type, bundle loading success, and rejection of an invalid bundle
-in an independent instance. A 14th frame proves that rejection leaves the
-original displayed page intact. The UI check additionally uploads a valid
-bundle, rejects damaged bytes and source files, then loads successfully again.
-It verifies that file loading makes no additional network requests.
-
-```bash
-node platform/wasm/verify.mjs
-
-# Regression: block every request except the HTML document itself.
-PROBE_DOCUMENT_ONLY=1 node platform/wasm/verify.mjs
-
-# For LAN HTTP only, explicitly grant the origin to this test browser:
-PROBE_URL=http://YOUR_LAN_IP:6091/ \
-PROBE_ALLOW_HTTP_ORIGIN=http://YOUR_LAN_IP:6091 \
-node platform/wasm/verify.mjs
-```
-
-Canvas2D is used only by the test to sample the already rendered GPU canvas.
-The production draw path does not read pixels back to the CPU.
-
-## Verified checkpoint
-
-- Public Lynx base: `377c684b893d8c99033ad42d7e7198112592f389`.
+- Lynx public base: `377c684b893d8c99033ad42d7e7198112592f389`.
 - PrimJS: `f78a8bb4d727bc80d9a142df0de25fe72bb168c1`.
 - Skity: `d68693d19457fed75ceb8584a66417361e9cc00c`.
-- Emscripten: 4.0.20, `emdawnwebgpu` port.
-- macOS ARM64, Chrome 152.0.7977.83, Apple WebGPU / Metal 3 adapter.
-- Baseline: 800 × 500, 8 Starlight nodes, 13 frames including cleanup and redraw.
-- Bundle app: 86,416-byte ReactLynx bundle, 13 native elements, six text nodes.
-  Browser validation passed with document-only loading, five pixel checks,
-  six text/layout checks, resource cleanup, invalid-bundle rejection and
-  redraw after rejection (14 frames total).
-  Frontend versions: ReactLynx 0.123.1, Rspeedy 0.16.1, React plugin 0.18.1;
-  transitive dependencies are pinned in `app/package-lock.json`.
-- Measured diagnostic build (decimal MB): WASM 12.76 MB / gzip 2.30 MB;
-  self-contained HTML 14.11 MB / gzip 2.50 MB. WASM includes the embedded font
-  and app bundle. The preview server currently serves uncompressed HTML.
-  Debug names are retained and LTO is disabled; these are experiment sizes.
-- Five background/card pixel checks and visible text passed; no GPU/WASM errors.
-- The build script and repeated dependency preparation passed locally.
+- Frontend: ReactLynx 0.123.1, Rspeedy 0.16.1, React plugin 0.18.1.
+  Dependencies are pinned by `app/package-lock.json`.
+- Current diagnostic WASM: 14.34 MB, gzip 2.53 MB. Self-contained HTML:
+  15.83 MB, gzip 2.75 MB. Debug names are retained and LTO is disabled;
+  these are experiment sizes, not production-size measurements.
+- Browser-only adaptations use the opt-in `enable_wasm_static_canvas` flag.
+  Native platform builds keep their existing implementations.
+- Report tasks and worker tasks use the browser event loop. Bytecode caching
+  lives inside the WASM virtual `/tmp`, with no host filesystem access.
 
-The native buildroot patch removes an ELF-only linker flag for WASM and uses
-the C++ linker. The probe enables the virtual filesystem for fonts and scene
-data and excludes QuickJS's signal-based inspector/profiler. Native builds keep
-their existing behavior because the experiment flag defaults to false.
+The original eight-node component probe remains separately available:
 
-At this Skity revision the WebGPU surface takes ownership of the supplied
-texture without adding a reference. The host therefore transfers that reference
-and releases each surface once after GPU completion. Releasing the same texture
-again caused allocator corruption in the initial prototype; the cleanup/redraw
-test covers the corrected ownership.
+```bash
+bash platform/wasm/build.sh
+node platform/wasm/verify.mjs
+```
+
+It executes hand-written `scene.js` in QJS and maps JSON to Starlight nodes;
+it reports `fullLynxBundle: false`. Set `LYNX_CANVAS_INTERACTIVE=0` when building
+the bundle host to use the earlier static ReactLynx sample instead.

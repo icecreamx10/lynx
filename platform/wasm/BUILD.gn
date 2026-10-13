@@ -64,11 +64,13 @@ executable("bundle_canvas") {
   output_extension = "js"
   inputs = [
     "app/dist/main.lynx.bundle",
+    "//out/lynx_core.js",
     "//out/Roboto-Regular.ttf",
   ]
   sources = [
     "../../core/renderer/utils/lynx_trail_hub_impl_default.cc",
     "../../core/services/event_report/event_tracker_platform_impl.cc",
+    "browser_bts_delegate.cc",
     "browser_message_loop.cc",
     "browser_platform.cc",
     "bundle_canvas.cc",
@@ -100,11 +102,13 @@ executable("bundle_canvas") {
     "-sASSERTIONS=1",
     "-sEXPORT_NAME=createLynxCanvas",
     "-sSINGLE_FILE=1",
-    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free']",
+    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free','_dispatch_pointer','_tick','_needs_frame','_render_frame','_release_frames','_host_error_count']",
     "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','HEAPU8']",
     "--embed-file",
     rebase_path("app/dist/main.lynx.bundle", root_build_dir) +
         "@/main.lynx.bundle",
+    "--embed-file",
+    rebase_path("//out/lynx_core.js", root_build_dir) + "@/lynx_core.js",
     "--embed-file",
     rebase_path("//out/Roboto-Regular.ttf", root_build_dir) + "@/font.ttf",
   ]

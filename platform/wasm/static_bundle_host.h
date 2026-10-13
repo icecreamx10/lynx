@@ -10,6 +10,11 @@
 #include "core/renderer/template_assembler.h"
 #include "core/renderer/ui_wrapper/common/native_prop_bundle.h"
 #include "core/renderer/ui_wrapper/painting/empty/painting_context_implementation.h"
+#include "core/runtime/common/bindings/event/message_event.h"
+#include "core/runtime/js/runtime_constant.h"
+#include "core/shell/runtime/bts/bts_runtime.h"
+#include "core/value_wrapper/value_impl_lepus.h"
+#include "platform/wasm/browser_runtime.h"
 namespace lynx::tasm {
 // Static first-paint host. Native modules, background JS, interaction and
 // asynchronous resources are deliberately not implemented by this adapter.
@@ -20,12 +25,43 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
       int32_t, Viewport = Viewport{}) override {
     return {};
   }
+  TemplateAssembler* owner = nullptr;
+  std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+  std::unique_ptr<shell::BTSRuntime> background;
+  std::shared_ptr<BrowserFrameClock> clock =
+      std::make_shared<BrowserFrameClock>();
+  bool background_ready = false;
+  bool dirty = true;
+  std::vector<fml::RefPtr<runtime::MessageEvent>> pending_messages;
+  struct Prepared {
+    TasmRuntimeBundle bundle;
+    lepus::Value props;
+    std::string page;
+    PackageInstanceDSL dsl;
+    PackageInstanceBundleModuleMode mode;
+    std::string url;
+    std::shared_ptr<PipelineOptions> options;
+    uint64_t trace;
+  };
+  std::unique_ptr<Prepared> prepared;
+  ~StaticBundleDelegate() override {
+    *alive = false;
+    owner = nullptr;
+    background.reset();
+  }
+  void Post(base::closure cb) {
+    fml::MessageLoop::GetCurrent().GetTaskRunner()->PostTask(
+        [life = alive, cb = std::move(cb)]() mutable {
+          if (*life) cb();
+        });
+  }
+  void StartBackground(int id);
   bool loaded = false;
   bool background_source_prepared = false;
   std::vector<std::string> errors;
   void OnDataUpdated() override {}
   void OnTasmFinishByNative() override {}
-  void OnRunPipelineFinished() override {}
+  void OnRunPipelineFinished() override { dirty = true; }
   void OnTemplateLoaded(const std::string& url) override { loaded = true; }
   void OnSSRHydrateFinished(const std::string& url) override {}
   void OnErrorOccurred(base::LynxError error) override {
@@ -38,7 +74,7 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
   void OnConfigUpdated(const lepus::Value& data) override {}
   void OnPageConfigDecoded(
       const std::shared_ptr<tasm::PageConfig>& config) override {}
-  void OnPageUpdated(bool is_first_screen) override {}
+  void OnPageUpdated(bool is_first_screen) override { dirty = true; }
   std::string TranslateResourceForTheme(const std::string& res_id,
                                         const std::string& theme_key) override {
     return {};
@@ -53,10 +89,19 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
       const tasm::PipelineID& pipeline_id,
       const tasm::PipelineOrigin& pipeline_origin,
       tasm::timing::TimestampUs pipeline_start_timestamp) override {}
-  void CallJSApiCallback(runtime::js::ApiCallBack callback) override {}
+  void CallJSApiCallback(runtime::js::ApiCallBack callback) override {
+    if (background)
+      Post([this, callback]() { background->CallJSApiCallback(callback); });
+  }
   void CallJSApiCallbackWithValue(runtime::js::ApiCallBack callback,
                                   const lepus::Value& value,
-                                  bool persist = false) override {}
+                                  bool persist = false) override {
+    if (background)
+      Post([this, callback,
+            value = lepus::Value::Clone(value).ToLepusValue(true), persist]() {
+        background->CallJSApiCallbackWithValue(callback, value, persist);
+      });
+  }
   void RemoveJSApiCallback(runtime::js::ApiCallBack callback) override {}
   void CallPlatformCallbackWithValue(
       const std::shared_ptr<shell::PlatformCallBackHolder>&,
@@ -66,18 +111,32 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
   }
   void CallJSFunction(const std::string& module_id,
                       const std::string& method_id,
-                      const lepus::Value& arguments) override {}
+                      const lepus::Value& arguments) override {
+    if (background)
+      Post([this, module_id, method_id,
+            args = lepus::Value::Clone(arguments).ToLepusValue(true)]() {
+        background->CallJSFunction(module_id, method_id, args);
+      });
+  }
   void OnDataUpdatedByNative(tasm::TemplateData data,
                              const bool reset) override {}
   void OnJSAppReload(
       tasm::TemplateData data,
       const std::shared_ptr<PipelineOptions>& pipeline_options) override {}
   void OnGlobalPropsUpdated(const lepus::Value& props) override {}
-  void OnLifecycleEvent(const lepus::Value& args) override {}
+  void OnLifecycleEvent(const lepus::Value& args) override {
+    DispatchMessageEvent(fml::MakeRefCounted<runtime::MessageEvent>(
+        runtime::kMessageEventTypeOnLifecycleEvent,
+        runtime::ContextProxy::Type::kCoreContext,
+        runtime::ContextProxy::Type::kJSContext,
+        std::make_unique<pub::ValueImplLepus>(args)));
+  }
   void OnI18nResourceChanged(const std::string& res) override {}
   void RequestVsync(
       uintptr_t id,
-      base::MoveOnlyClosure<void, int64_t, int64_t> callback) override {}
+      base::MoveOnlyClosure<void, int64_t, int64_t> callback) override {
+    clock->RequestAnimationFrame(id, std::move(callback));
+  }
   lepus::Value TriggerLepusMethod(const std::string& method_name,
                                   const lepus::Value& arguments) override {
     return {};
@@ -100,6 +159,10 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
       const std::shared_ptr<PipelineOptions>& pipeline_options,
       uint64_t trace_flow_id) override {
     background_source_prepared = true;
+    prepared = std::make_unique<Prepared>(Prepared{
+        std::move(bundle), lepus::Value::Clone(global_props).ToLepusValue(true),
+        page_name, dsl, bundle_module_mode, url, pipeline_options,
+        trace_flow_id});
   }
   void OnComponentDecoded(tasm::TasmRuntimeBundle bundle) override {}
   void OnCardConfigDataChanged(const lepus::Value& data) override {}
@@ -154,8 +217,29 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
   void ReportElementMemoryInfo(int64_t mem_size_bytes,
                                int element_count) override {}
   event::DispatchEventResult DispatchMessageEvent(
-      fml::RefPtr<runtime::MessageEvent>) override {
-    return {};
+      fml::RefPtr<runtime::MessageEvent> message) override {
+    auto payload =
+        lepus::Value::Clone(
+            pub::ValueUtils::ConvertValueToLepusValue(*message->message()))
+            .ToLepusValue(true);
+    message = fml::MakeRefCounted<runtime::MessageEvent>(
+        message->type(), message->time_stamp(), message->GetOriginType(),
+        message->GetTargetType(),
+        std::make_unique<pub::ValueImplLepus>(std::move(payload)));
+
+    if (message->IsSendingToJSThread()) {
+      if (background)
+        Post([this, message = std::move(message)]() mutable {
+          background->OnReceiveMessageEvent(std::move(message));
+        });
+      else
+        pending_messages.push_back(std::move(message));
+    } else if (message->IsSendingToCoreThread()) {
+      Post([this, message = std::move(message)]() mutable {
+        if (owner) owner->OnReceiveMessageEvent(std::move(message));
+      });
+    }
+    return {event::EventCancelType::kNotCanceled, true};
   }
   void InvokeResponsePromiseCallback(base::closure closure) override {
     closure();

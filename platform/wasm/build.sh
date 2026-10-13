@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 set -euo pipefail
+export PYTHONHASHSEED=0
 probe_root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$probe_root"
 : "${LYNX_WASM_EMSDK:?Set LYNX_WASM_EMSDK to an activated Emscripten 4.0.20 SDK}"
