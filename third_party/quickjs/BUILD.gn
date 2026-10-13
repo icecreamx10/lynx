@@ -36,11 +36,13 @@ config("quickjs_private_config") {
   # FIXME(): definition controlled by the args
   defines = [
     "ENABLE_LEPUSNG",
-    "ENABLE_QUICKJS_DEBUGGER",
     "LYNX_SIMPLIFY=0",
     "LYNX_DEV",
     "CONFIG_VERSION=\"2019-09-10\"",
   ]
+  if (!(is_wasm && enable_wasm_static_canvas)) {
+    defines += [ "ENABLE_QUICKJS_DEBUGGER" ]
+  }
   if (enable_lepusng_bytecode_opt) {
     defines += [ "ENABLE_LEPUSNG_BYTECODE_OPT" ]
   }
@@ -148,6 +150,17 @@ source_set("quickjs_source") {
     "src/src/basic/log/logging.cc",
     "src/src/basic/log/primjs_logging.cc",
   ]
+  if (is_wasm && enable_wasm_static_canvas) {
+    # Browser single-thread probe has no signal-based profiler or inspector.
+    _runtime_sources = []
+    foreach(_source, sources) {
+      if (string_replace(_source, "/inspector/", "") == _source) {
+        _runtime_sources += [ _source ]
+      }
+    }
+    sources = []
+    sources = _runtime_sources
+  }
 
   deps = [
     ":quickjs_libc",

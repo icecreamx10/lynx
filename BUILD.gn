@@ -17,6 +17,9 @@ group("root") {
 group("default") {
   testonly = true
   deps = [ "core:lynx_native" ]
+  if (is_wasm && enable_wasm_static_canvas) {
+    deps += [ "platform/wasm:static_canvas" ]
+  }
   if (is_android) {
     deps += [ "platform/android:Android" ]
   } else if (is_harmony) {

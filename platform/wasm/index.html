@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lynx QuickJS WASM canvas probe</title>
+<link rel="icon" href="data:,">
+<style>
+body { margin: 32px; background: #080e18; color: #d7e4fa; font: 15px system-ui; }
+canvas { display: block; width: 800px; height: 500px; border: 1px solid #29354c; }
+pre { white-space: pre-wrap; max-width: 800px; }
+</style>
+<h1>Lynx WASM static canvas probe</h1>
+<canvas id="canvas" width="800" height="500"></canvas>
+<pre id="status">Starting QuickJS + Lynx Starlight + Skity WebGPU…</pre>
+<p>This is a component integration probe. Full Lynx bundle loading and Clay UI are not included yet.</p>
+<script>Error.stackTraceLimit = 80;</script>
+<script src="static_canvas.js"></script>
+<script>
+(async () => {
+  const status = document.querySelector('#status');
+  window.probeErrors = [];
+  try {
+    if (!navigator.gpu) {
+      if (!window.isSecureContext) throw new Error(
+        'LAN HTTP needs a browser exception for WebGPU. In Chrome open ' +
+        'chrome://flags/#unsafely-treat-insecure-origin-as-secure, add ' +
+        location.origin + ', enable it, and relaunch Chrome.');
+      throw new Error('WebGPU unavailable');
+    }
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error('No WebGPU adapter');
+    const device = await adapter.requestDevice();
+    window.probeDevice = device;
+    window.probeAdapter = { vendor: adapter.info.vendor, architecture: adapter.info.architecture,
+      device: adapter.info.device, description: adapter.info.description };
+    device.addEventListener('uncapturederror', event => {
+      window.probeErrors.push(event.error.message);
+      status.textContent = 'GPU error: ' + event.error.message;
+    });
+    const module = await createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
+    window.lynxCanvas = module;
+    const code = module.ccall('main', 'number', [], []);
+    if (code !== 0) throw new Error('WASM initialization failed: ' + code);
+    const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
+    if (!result.frames) throw new Error('No rendered frame');
+    await device.queue.onSubmittedWorkDone();
+    module.ccall('release_completed_frames', null, [], []);
+    await new Promise(requestAnimationFrame);
+    window.probeResult = result;
+    status.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    window.probeErrors.push(String(error));
+    status.textContent = String(error);
+    console.error(error);
+  }
+})();
+</script>

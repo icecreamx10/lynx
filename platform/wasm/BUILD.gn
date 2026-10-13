@@ -1,0 +1,60 @@
+# Copyright 2026 The Lynx Authors. All rights reserved.
+# Licensed under the Apache License Version 2.0 that can be found in the
+# LICENSE file in the root directory of this source tree.
+
+import("../../core/Lynx.gni")
+
+config("browser_filesystem") {
+  ldflags = [
+    "-sFILESYSTEM=1",
+    "-sFORCE_FILESYSTEM=1",
+    "-sUSE_ZLIB=1",
+    "-g2",
+  ]
+}
+
+executable("static_canvas") {
+  output_extension = "js"
+  sources = [ "static_canvas.cc" ]
+  include_dirs = [
+    "../..",
+    "../../third_party/quickjs/src/src/interpreter",
+    "../../third_party/quickjs/src/src",
+    "../../third_party/rapidjson",
+    "../../out/skity-source/include",
+    "../../out/skity-source/third_party/glm",
+  ]
+  defines = [ "NAPI_EXTERN=" ]
+  configs += [
+    "../../core:lynx_public_config",
+    ":browser_filesystem",
+  ]
+  deps = [
+    "../../base/src:base_group",
+    "../../core/renderer/starlight",
+    "../../third_party/quickjs",
+  ]
+  cflags = [ "--use-port=emdawnwebgpu" ]
+  ldflags = [
+    "--use-port=emdawnwebgpu",
+    "-sFILESYSTEM=1",
+    "-sALLOW_MEMORY_GROWTH=1",
+    "-sSTACK_SIZE=2097152",
+    "-sASSERTIONS=1",
+    "-sEXPORT_NAME=createLynxCanvas",
+    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames']",
+    "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString']",
+    "--preload-file",
+    rebase_path("scene.js", root_build_dir) + "@/scene.js",
+    "--preload-file",
+    rebase_path("//out/Roboto-Regular.ttf", root_build_dir) + "@/font.ttf",
+  ]
+  libs = [
+    "c++",
+    "//out/skity-wasm/libskity.a",
+    "//out/skity-wasm/module/wgx/libwgsl-cross.a",
+    "//out/skity-wasm/third_party/pugixml/libpugixml.a",
+    "//out/skity-wasm/third_party/jsoncpp/src/lib_json/libjsoncpp.a",
+    "//out/skity-wasm/src/libfreetype2.a",
+  ]
+}
