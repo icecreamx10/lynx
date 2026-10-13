@@ -24,6 +24,9 @@ typedef HRESULT(WINAPI* GetThreadDescription)(HANDLE hThread,
 #endif
 
 std::string GetCurrentThreadName() {
+#if defined(LYNX_WASM_STATIC_CANVAS)
+  return "browser-main";
+#else
   char buf[64] = {};
 #if defined(OS_ANDROID)
   if (prctl(PR_GET_NAME, buf) == 0) {
@@ -49,6 +52,7 @@ std::string GetCurrentThreadName() {
   }
 #endif
   return "unknow";  // If thread name is not set, return unknow
+#endif
 }
 
 }  // namespace base

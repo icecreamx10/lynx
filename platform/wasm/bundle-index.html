@@ -1,0 +1,132 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lynx Bundle · WASM Canvas</title>
+<link rel="icon" href="data:,">
+<style>
+body { margin: 24px; background: #080e18; color: #d7e4fa; font: 15px system-ui; }
+canvas { display: block; width: 800px; height: 500px; border: 1px solid #29354c; }
+pre { white-space: pre-wrap; max-width: 800px; }
+.loader { box-sizing:border-box; max-width:802px; padding:18px; margin-bottom:18px; background:#111c2e; border:1px solid #29354c; border-radius:10px; }
+.loader h2 { margin:0 0 10px; font-size:18px; }
+.loader p { margin:8px 0; line-height:1.6; }
+.loader .hint { color:#9fb0cc; font-size:13px; }
+.controls { display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap; }
+input { flex:1; min-width:240px; font:inherit; }
+button { border:0; border-radius:6px; padding:10px 16px; background:#7eb9ff; color:#09172b; font:600 14px system-ui; cursor:pointer; }
+button:disabled { opacity:.5; cursor:default; }
+button:focus-visible, input:focus-visible { outline:2px solid #b2d6ff; outline-offset:3px; }
+#load-status { min-height:22px; color:#bdd9ff; }
+canvas { max-width:100%; height:auto; }
+</style>
+<h1>Lynx Bundle · WASM Canvas</h1>
+<section class="loader" aria-labelledby="loader-title">
+  <h2 id="loader-title">加载本地 Lynx Bundle</h2>
+  <p><strong>文件必须由 LynxJS 工具链编译生成</strong>，例如使用 <code>@lynx-js/rspeedy</code> 执行 <code>rspeedy build</code> 得到的 <code>.lynx.bundle</code>。</p>
+  <p class="hint">不能直接加载 JSX / TSX / JS 源码。当前实验版仅支持 view/text 的静态首屏、纯色背景和单行英文文字，暂不支持交互。</p>
+  <div class="controls">
+    <input id="bundle-file" type="file" accept=".lynx.bundle,.bundle" aria-label="选择 LynxJS 编译的 bundle" disabled>
+    <button id="load-bundle" type="button" disabled>加载 bundle</button>
+  </div>
+  <p id="load-status" role="status" aria-live="polite">引擎初始化后可选择文件。</p>
+</section>
+<canvas id="canvas" width="800" height="500"></canvas>
+<pre id="status">正在加载内置示例…</pre>
+
+<script>Error.stackTraceLimit = 80;</script>
+<script>
+/* LYNX_WASM_MODULE */
+</script>
+<script>
+(async () => {
+  const status = document.querySelector('#status');
+  window.probeErrors = [];
+  const input = document.querySelector('#bundle-file');
+  const button = document.querySelector('#load-bundle');
+  const loadStatus = document.querySelector('#load-status');
+  let busy = false;
+  input.addEventListener('change', () => {
+    button.disabled = busy || !input.files.length;
+    loadStatus.textContent = input.files.length ? '已选择：' + input.files[0].name : '请选择编译生成的 .lynx.bundle。';
+  });
+  const showReport = result => {
+    window.probeResult = result;
+    status.textContent = 'Lynx bundle 已加载 · QJS / WASM · ' + result.nodes + ' 个原生节点 · Skity WebGPU';
+  };
+  button.addEventListener('click', async () => {
+    const file = input.files[0];
+    if (!file || busy || !window.lynxCanvas) return;
+    busy = true; input.disabled = true; button.disabled = true;
+    loadStatus.dataset.state = 'loading';
+    loadStatus.textContent = '正在加载：' + file.name;
+    let pointer = 0;
+    const module = window.lynxCanvas;
+    try {
+      if (!file.name.endsWith('.bundle')) throw new Error('请选择 LynxJS 编译生成的 .lynx.bundle，不能加载源码。');
+      if (!file.size || file.size > 64 * 1024 * 1024) throw new Error('bundle 必须非空且小于 64 MiB。');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await window.probeDevice.queue.onSubmittedWorkDone();
+      module.ccall('release_completed_frames', null, [], []);
+      await new Promise(requestAnimationFrame);
+      pointer = module._malloc(bytes.length);
+      if (!pointer) throw new Error('WASM 内存分配失败。');
+      module.HEAPU8.set(bytes, pointer);
+      const code = module.ccall('load_bundle', 'number', ['number', 'number'], [pointer, bytes.length]);
+      if (code !== 0) throw new Error(module.ccall('bundle_load_error', 'string', [], []));
+      const renderCode = module.ccall('render_scene', 'number', [], []);
+      if (renderCode !== 0) throw new Error('绘制失败：' + renderCode);
+      await window.probeDevice.queue.onSubmittedWorkDone();
+      module.ccall('release_completed_frames', null, [], []);
+      await new Promise(requestAnimationFrame);
+      const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
+      if (result.errors.length) throw new Error(result.errors.join('; '));
+      showReport(result);
+      loadStatus.textContent = '已加载：' + file.name;
+      loadStatus.dataset.state = 'success';
+    } catch (error) {
+      loadStatus.textContent = '加载失败：' + error.message;
+      loadStatus.dataset.state = 'error';
+    } finally {
+      if (pointer) module._free(pointer);
+      busy = false; input.disabled = false; button.disabled = !input.files.length;
+    }
+  });
+  try {
+    if (typeof globalThis.createLynxCanvas !== 'function') {
+      throw new Error('The embedded WASM loader is missing. Rebuild and stage this page.');
+    }
+    if (!navigator.gpu) {
+      if (!window.isSecureContext) throw new Error(
+        'LAN HTTP needs a browser exception for WebGPU. In Chrome open ' +
+        'chrome://flags/#unsafely-treat-insecure-origin-as-secure, add ' +
+        location.origin + ', enable it, and relaunch Chrome.');
+      throw new Error('WebGPU unavailable');
+    }
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error('No WebGPU adapter');
+    const device = await adapter.requestDevice();
+    window.probeDevice = device;
+    window.probeAdapter = { vendor: adapter.info.vendor, architecture: adapter.info.architecture,
+      device: adapter.info.device, description: adapter.info.description };
+    device.addEventListener('uncapturederror', event => {
+      window.probeErrors.push(event.error.message);
+      status.textContent = 'GPU error: ' + event.error.message;
+    });
+    const module = await globalThis.createLynxCanvas({ preinitializedWebGPUDevice: device, noInitialRun: true });
+    window.lynxCanvas = module;
+    const code = module.ccall('main', 'number', [], []);
+    if (code !== 0) throw new Error('WASM initialization failed: ' + code);
+    const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
+    if (!result.frames) throw new Error('No rendered frame');
+    await device.queue.onSubmittedWorkDone();
+    module.ccall('release_completed_frames', null, [], []);
+    await new Promise(requestAnimationFrame);
+    showReport(result);
+    input.disabled = false;
+    loadStatus.textContent = '内置示例已加载，可选择你编译的 .lynx.bundle。';
+  } catch (error) {
+    window.probeErrors.push(String(error));
+    status.textContent = String(error);
+    console.error(error);
+  }
+})();
+</script>

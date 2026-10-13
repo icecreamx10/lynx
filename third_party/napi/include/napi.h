@@ -941,6 +941,11 @@ class NAPI_EXTERN TypedArray : public Object {
                          napi_typedarray_type type, size_t length)
       : Object(env, value), _type(type), _length(length) {}
 
+  // WASM's newer Clang rejects the out-of-range sentinel as an integral
+  // constant expression. An inline variable permits runtime initialization.
+#if defined(__wasm32__)
+  inline
+#endif
   static const napi_typedarray_type unknown_array_type =
       static_cast<napi_typedarray_type>(-1);
 };

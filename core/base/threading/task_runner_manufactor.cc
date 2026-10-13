@@ -462,11 +462,21 @@ fml::Thread TaskRunnerManufactor::CreateJSWorkerThread(
 
 void TaskRunnerManufactor::PostTaskToConcurrentLoop(base::closure task,
                                                     ConcurrentTaskType type) {
+#if defined(LYNX_WASM_STATIC_CANVAS)
+  // This opt-in static browser host has one thread. Preserve asynchronous
+  // task ordering on its event loop instead of constructing pthread workers.
+  fml::MessageLoop::GetCurrent().GetTaskRunner()->PostTask(std::move(task));
+#else
   GetConcurrentLoop(type).PostTask(std::move(task));
+#endif
 }
 
 bool TaskRunnerManufactor::IsOnConcurrentLoopWorker(ConcurrentTaskType type) {
+#if defined(LYNX_WASM_STATIC_CANVAS)
+  return false;
+#else
   return GetConcurrentLoop(type).RunsTasksOnCurrentThreadWorker();
+#endif
 }
 
 fml::ConcurrentMessageLoop& TaskRunnerManufactor::GetConcurrentLoop(

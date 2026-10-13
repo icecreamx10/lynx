@@ -1,0 +1,15 @@
+/* Copyright 2026 The Lynx Authors. All rights reserved.
+ * Licensed under the Apache License Version 2.0 that can be found in the
+ * LICENSE file in the root directory of this source tree. */
+
+.page { width:800px; height:500px; padding:32px; background-color:#101827; display:flex; flex-direction:column; }
+.header { width:736px; height:64px; background-color:#19263d; }
+.title { width:700px; height:48px; font-size:26px; color:#eaf2ff; margin-left:16px; margin-top:8px; }
+.subtitle { width:736px; height:40px; font-size:18px; color:#eaf2ff; margin-top:20px; }
+.cards { width:736px; height:152px; display:flex; flex-direction:row; margin-top:20px; }
+.card { width:234px; height:152px; margin-right:16px; }
+.green { background-color:#174a48; }
+.blue { background-color:#283d67; }
+.purple { background-color:#503663; }
+.label { width:218px; height:48px; margin-left:16px; margin-top:16px; font-size:20px; color:#eaf2ff; }
+.footer { width:736px; height:64px; margin-top:20px; font-size:18px; color:#eaf2ff; }

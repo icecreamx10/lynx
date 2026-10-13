@@ -12,6 +12,9 @@
 #include <vector>
 
 #include "base/include/fml/thread.h"
+#if defined(LYNX_WASM_STATIC_CANVAS)
+#include "base/include/fml/message_loop.h"
+#endif
 #include "core/renderer/utils/lynx_env.h"
 #include "core/services/event_report/event_tracker.h"
 
@@ -74,10 +77,15 @@ class EventTrackerPlatformImpl {
   static void ClearCache(int32_t instance_id);
   // Get Task Runner of report thread.
   static fml::RefPtr<fml::TaskRunner> GetReportTaskRunner() {
+#if defined(LYNX_WASM_STATIC_CANVAS)
+    // The static browser host uses the browser event loop instead of pthreads.
+    return fml::MessageLoop::GetCurrent().GetTaskRunner();
+#else
     static base::NoDestructor<fml::Thread> event_report_thread_t_(
         fml::Thread::ThreadConfig(
             kLynxReportThread, fml::Thread::ThreadPriority::NORMAL, nullptr));
     return event_report_thread_t_->GetTaskRunner();
+#endif
   }
 };
 
