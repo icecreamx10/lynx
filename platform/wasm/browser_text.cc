@@ -91,7 +91,7 @@ std::shared_ptr<FontManager> Fonts() {
   static auto fonts = std::make_shared<FontManager>();
   return fonts;
 }
-const sl::TextAttributes* Attributes(tasm::Element* node) {
+const tasm::TextAttributes* Attributes(tasm::Element* node) {
   auto& attrs = node->computed_css_style()->GetTextAttributes();
   return attrs ? &*attrs : nullptr;
 }
@@ -130,7 +130,7 @@ tt::Style StyleFor(tasm::Element* node, const tt::Style& inherited) {
     style.SetFontDescriptor(fd);
     auto decoration = tt::DecorationType::kNone;
     if (attrs->underline_decoration)
-      decoration = tt::DecorationType::kUnderLine;
+      decoration = tt::DecorationType::kUnderline;
     if (attrs->line_through_decoration)
       decoration = tt::DecorationType::kLineThrough;
     style.SetDecorationType(decoration);

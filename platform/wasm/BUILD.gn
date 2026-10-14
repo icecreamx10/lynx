@@ -80,7 +80,6 @@ executable("bundle_canvas") {
     "browser_message_loop.cc",
     "browser_platform.cc",
     "browser_text.cc",
-    "devtool/native.cc",
     "bundle_canvas.cc",
   ]
   include_dirs = [
@@ -90,7 +89,6 @@ executable("bundle_canvas") {
     "../../third_party/rapidjson",
     "../../out/skity-source/include",
     "../../out/textra-source/public",
-    "../../out/skity-source/third_party/jsoncpp/include",
     "../../out/skity-source/third_party/glm",
   ]
   defines = [ "NAPI_EXTERN=" ]
@@ -111,12 +109,11 @@ executable("bundle_canvas") {
     "-sALLOW_MEMORY_GROWTH=1",
     "-sSTACK_SIZE=2097152",
     "-sPTHREAD_POOL_SIZE=1",
-    "-sINITIAL_MEMORY=33554432",
     "-sALLOW_BLOCKING_ON_MAIN_THREAD=0",
     "-sASSERTIONS=1",
     "-sEXPORT_NAME=createLynxCanvas",
     "-sSINGLE_FILE=1",
-    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free','_dispatch_pointer','_tick','_needs_frame','_render_frame','_release_frames','_host_error_count','_image_allocate','_image_complete','_image_playback_event','_test_bts_busy','_devtool_dispatch']",
+    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free','_dispatch_pointer','_tick','_needs_frame','_render_frame','_release_frames','_host_error_count','_image_allocate','_image_complete','_image_playback_event','_test_bts_busy']",
     "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','HEAPU8','WebGPU']",
     "--embed-file",
     rebase_path("app/dist/main.lynx.bundle", root_build_dir) +
