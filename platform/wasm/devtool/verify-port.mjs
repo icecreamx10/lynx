@@ -8,6 +8,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
 try {
  const page=await browser.newPage();
+ const errors=[];page.on("pageerror",error=>errors.push(String(error)));
  await page.goto(process.env.PROBE_URL || 'http://127.0.0.1:6140/devtools/connection.js');
  await page.setContent('<div id="panel" style="height:700px"></div>');
  await page.evaluate(async()=>{
@@ -34,6 +35,7 @@ try {
   await page.evaluate(()=>host.close());
  }
  checks.reconnects=3;
+ assert.deepEqual(errors,[]);
  await fs.mkdir('out/Wasm/validation-devtool-port',{recursive:true});
  await fs.writeFile('out/Wasm/validation-devtool-port/validation.json',JSON.stringify({passed:true,checks},null,2));
  console.log(checks);

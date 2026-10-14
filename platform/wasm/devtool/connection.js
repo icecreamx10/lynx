@@ -5,6 +5,8 @@
   const params = new URLSearchParams(location.search);
   if (params.get('transport') !== 'messageport') return;
   const token = params.get('token');
+  // The inspected canvas is already visible in the parent page.
+  localStorage.setItem('screencastEnabled','false');
   let current;
   globalThis.LynxMessagePortConnection = class {
     constructor() {
