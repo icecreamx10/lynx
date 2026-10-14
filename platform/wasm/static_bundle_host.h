@@ -261,7 +261,7 @@ class CanvasPaintingContext : public PaintingContextPlatformImpl {
   lynx::wasm::BrowserText texts;
 
  private:
-  std::vector<std::string>& errors_;
+  [[maybe_unused]] std::vector<std::string>& errors_;
 };
 class CanvasPropBundleCreator : public PropBundleCreator {
  public:

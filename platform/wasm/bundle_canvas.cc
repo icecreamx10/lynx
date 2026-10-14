@@ -30,6 +30,7 @@
 #include "core/renderer/starlight/style/layout_computed_style.h"
 #include "core/shell/runtime/mts/mts_runtime.h"
 #include "platform/wasm/browser_images.h"
+#include "platform/wasm/devtool/native.h"
 #include "platform/wasm/static_bundle_host.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
@@ -72,6 +73,11 @@ WGPUSurface surface = nullptr;
 std::string report;
 int node_count = 0;
 int frame_count = 0;
+EM_JS(void, EmitDevTool, (const char* message, int generation), {
+  Module.onDevToolMessage?.(UTF8ToString(message),generation);
+});
+std::unique_ptr<lynx::wasm::BrowserDevTool> devtool;
+
 
 std::string TextContent(tasm::Element* node) {
   if (node->is_raw_text())
@@ -199,6 +205,7 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   manager = candidate_manager;
   text_host = candidate_text;
   root = candidate_root;
+  if (devtool) devtool->Reset();
   bundle_bytes = size;
   node_count = count;
   qjs_verified = true;
@@ -393,12 +400,20 @@ extern "C" EMSCRIPTEN_KEEPALIVE int render_scene() {
   auto* canvas = target->LockCanvas();
   if (!canvas) return 4;
   PaintNode(canvas, *root, 0, 0);
+  if(devtool && devtool->Highlighted()) {
+    auto box=devtool->HighlightBox();
+    if(box.isMember("content")) {
+      skity::Paint highlight; highlight.SetColor(0x554080ff);
+      canvas->DrawRect(skity::Rect::MakeXYWH(box["content"][0].asFloat(),box["content"][1].asFloat(),box["width"].asFloat(),box["height"].asFloat()),highlight);
+    }
+  }
   canvas->Flush();
   target->Flush();
   pending_surfaces.push_back(
       {++submitted_frame, std::move(target), images->Retain()});
   peak_pending =
       std::max(peak_pending, static_cast<int>(pending_surfaces.size()));
+  if(devtool)devtool->Poll();
   delegate->dirty = false;
   node_count = CountNodes(root);
   ++frame_count;
@@ -559,4 +574,11 @@ int main() {
   wgpuSurfaceConfigure(surface, &configuration);
   wgpuInstanceRelease(instance);
   return render_scene();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void devtool_dispatch(const char* raw) {
+  if(!devtool) devtool=std::make_unique<lynx::wasm::BrowserDevTool>(
+    [] { return root; }, [] { if(manager && root){auto options=std::make_shared<tasm::PipelineOptions>();manager->OnPatchFinish(options,root);} if(delegate)delegate->dirty=true; },
+    [](const std::string& message) { EmitDevTool(message.c_str(),bundle_sequence); });
+  devtool->Dispatch(raw?raw:"");
 }

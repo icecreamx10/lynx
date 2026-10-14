@@ -36,7 +36,7 @@ export class LynxDevToolHost {
     };
     addEventListener('message',this.listener);
     this.iframe.src = '/devtools/inspector.html?transport=messageport&token='+encodeURIComponent(this.token)
-      +'&showPanels=elements,console,sources&panel=elements';
+      +'&showPanels=Elements,Console,Sources&hl=en-US&panel=elements';
     this.container.replaceChildren(this.iframe);
   }
   send(payload,generation=this.generation) {

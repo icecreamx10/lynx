@@ -30,6 +30,8 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   <p id="load-status" role="status" aria-live="polite">引擎初始化后可选择文件。</p>
 </section>
 <canvas id="canvas" width="800" height="500"></canvas>
+<button id="toggle-devtool">打开 DevTool</button>
+<section id="devtool-panel" style="height:650px;resize:vertical;overflow:auto;display:none"></section>
 <pre id="status">正在加载内置示例…</pre>
 
 <script>Error.stackTraceLimit = 80;</script>
@@ -190,4 +192,27 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     console.error(error);
   }
 })();
+</script>
+
+<script type="module">
+import {LynxDevToolHost} from '/devtools/host.js';
+const panel=document.querySelector('#devtool-panel');
+const button=document.querySelector('#toggle-devtool');
+let generation=0;
+const host=window.lynxDevTool=new LynxDevToolHost({container:panel,dispatch:(raw,g)=>{
+ const current=JSON.parse(lynxCanvas.ccall('scene_report','string',[],[])).bundleSequence;
+ if(g===current)lynxCanvas.ccall('devtool_dispatch',null,['string'],[raw]);
+}});
+button.onclick=()=>{
+ if(!window.lynxCanvas)return;
+ if(!host.closed){host.close();panel.style.display='none';button.textContent='打开 DevTool';return;}
+ generation=JSON.parse(lynxCanvas.ccall('scene_report','string',[],[])).bundleSequence;
+ lynxCanvas.onDevToolMessage=(raw,g)=>host.send(raw,g);
+ panel.style.display='block';host.open(generation);button.textContent='关闭 DevTool';
+};
+setInterval(()=>{
+ if(host.closed||!window.lynxCanvas)return;
+ const current=JSON.parse(lynxCanvas.ccall('scene_report','string',[],[])).bundleSequence;
+ if(current!==generation){generation=current;host.open(current);}
+},250);
 </script>
