@@ -61,9 +61,9 @@ executable("static_canvas") {
 }
 
 executable("bundle_canvas") {
-  _browser_pool_size = "1"
+  _browser_pool_size = "2"
   if (enable_inspector) {
-    _browser_pool_size = "2"
+    _browser_pool_size = "3"
   }
   output_extension = "js"
   inputs = [
@@ -82,6 +82,7 @@ executable("bundle_canvas") {
     "browser_bts_worker.cc",
     "browser_task_thread.cc",
     "browser_images.cc",
+    "browser_host.cc",
     "browser_message_loop.cc",
     "browser_platform.cc",
     "browser_text.cc",
@@ -120,6 +121,8 @@ executable("bundle_canvas") {
   ldflags = [
     "--use-port=emdawnwebgpu",
     "-sUSE_HARFBUZZ=1",
+    "-sOFFSCREENCANVAS_SUPPORT=1",
+    "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['\$GL']",
     "-sFILESYSTEM=1",
     "-sALLOW_MEMORY_GROWTH=1",
     "-sSTACK_SIZE=2097152",
@@ -145,6 +148,14 @@ executable("bundle_canvas") {
     "--embed-file",
     rebase_path("//out/NotoEmoji.ttf", root_build_dir) + "@/emoji.ttf",
   ]
+  if (enable_inspector) {
+    inputs += [ "app/dist/devtool-debug.json" ]
+    ldflags += [
+      "--embed-file",
+      rebase_path("app/dist/devtool-debug.json", root_build_dir) +
+          "@/devtool-debug.json",
+    ]
+  }
   libs = [
     "c++",
     "//out/skity-wasm/libskity.a",

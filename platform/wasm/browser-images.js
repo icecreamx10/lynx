@@ -77,7 +77,7 @@ globalThis.createLynxBrowserImages = function(module, device) {
   async function load(r) {
     let bitmap;
     try {
-      const url=new URL(r.src, document.baseURI);
+      const url=new URL(r.src, module.lynxBaseURL || globalThis.document?.baseURI || location.href);
       if(!['http:','https:','data:','blob:'].includes(url.protocol)) throw new Error('Unsupported image URL protocol');
       const response=await fetch(url,{signal:r.abort.signal});
       if(!response.ok) throw new Error(`Image HTTP ${response.status}`);

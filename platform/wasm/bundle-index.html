@@ -24,6 +24,10 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   <p><strong>文件必须由 LynxJS 工具链编译生成</strong>，例如使用 <code>@lynx-js/rspeedy</code> 执行 <code>rspeedy build</code> 得到的 <code>.lynx.bundle</code>。</p>
   <p class="hint">不能直接加载 JSX / TSX / JS 源码。当前实验版支持 view/text/image、PNG/JPEG/WebP 静态图和 GIF/WebP 动图（需浏览器支持）、点击事件、React 状态更新和 rAF 动画；文字仍限单行英文，复杂组件尚未接入。</p>
   <div class="controls">
+    <label>MTS / 渲染宿主 <select id="thread-mode">
+      <option value="worker">Worker（支持暂停和单步）</option>
+      <option value="main">浏览器主线程</option>
+    </select></label>
     <input id="bundle-file" type="file" accept=".lynx.bundle,.bundle" aria-label="选择 LynxJS 编译的 bundle" disabled>
     <button id="load-bundle" type="button" disabled>加载 bundle</button>
   </div>
@@ -41,200 +45,95 @@ canvas { max-width:100%; height:auto; touch-action:none; }
 <script id="lynx-wasm-module">
 /* LYNX_WASM_MODULE */
 </script>
-<script>
+<script id="lynx-browser-images">
 /* LYNX_BROWSER_IMAGES */
+</script>
+<script id="lynx-browser-engine">
+/* LYNX_BROWSER_ENGINE */
 </script>
 <script>
 (async () => {
-  const status = document.querySelector('#status');
-  window.probeErrors = [];
-  const canvas = document.querySelector('#canvas');
-  const input = document.querySelector('#bundle-file');
-  const button = document.querySelector('#load-bundle');
-  const loadStatus = document.querySelector('#load-status');
-  let devtool = null;
-  let devtoolOpen = false;
-  let devtoolHostClass;
-  const toggleDevtool = document.querySelector('#toggle-devtool');
-  const devtoolPanel = document.querySelector('#devtool-panel');
+  const status=document.querySelector('#status'),canvas=document.querySelector('#canvas');
+  const input=document.querySelector('#bundle-file'),button=document.querySelector('#load-bundle');
+  const loadStatus=document.querySelector('#load-status'),select=document.querySelector('#thread-mode');
+  const mode=new URLSearchParams(location.search).get('mts')==='main'?'main':'worker';
+  select.value=mode;
+  select.addEventListener('change',()=>{const url=new URL(location.href);url.searchParams.set('mts',select.value);location.assign(url);});
+  window.probeErrors=[];
+  let client,devtool=null,devtoolOpen=false,busy=false;
+  const toggle=document.querySelector('#toggle-devtool'),panel=document.querySelector('#devtool-panel');
   function closeDevtool() {
-    devtool?.close();
-    devtool = null;
-    devtoolOpen = false;
-    devtoolPanel.hidden = true;
-    toggleDevtool.textContent = '打开 Lynx DevTool';
+    devtool?.close();devtool=null;devtoolOpen=false;panel.hidden=true;
+    toggle.textContent='打开 Lynx DevTool';
   }
   async function openDevtool() {
-    const module = window.lynxCanvas;
-    if (!module?._devtool_attach) return;
-    if (!devtoolHostClass) {
-      ({LynxDevToolHost:devtoolHostClass} = await import('/devtools/host.js'));
-    }
+    const {LynxDevToolHost}=await import('/devtools/host.js');
     closeDevtool();
-    const generation = module.ccall('devtool_attach', 'number', [], []);
-    if (!generation) throw new Error('Lynx Inspector is not ready');
-    devtool = new devtoolHostClass({container:devtoolPanel,
-      dispatch:(payload, current) => module.ccall('devtool_dispatch', null,
-        ['number','string'], [current,payload]),
-      onDetach:() => module.ccall('devtool_detach', null, ['number'], [generation])});
-    module.onLynxCDP = (view, type, payload) => {
-      if (type === 'CDP' && view === generation) devtool?.send(payload, view);
-    };
-    devtoolPanel.hidden = false;
-    devtool.open(generation);
-    devtoolOpen = true;
-    toggleDevtool.textContent = '关闭 Lynx DevTool';
+    const generation=await client.call('devtool_attach');
+    if(!generation)throw Error('Lynx Inspector is not ready');
+    devtool=new LynxDevToolHost({container:panel,
+      dispatch:(payload,current)=>{
+        const request=JSON.parse(payload);
+        // Window cannot block in the native pause loop. Keep the main-thread
+        // renderer usable and report this host capability instead of freezing.
+        if(mode==='main' && request.sessionId && request.method.startsWith('Debugger.') &&
+           !['Debugger.disable','Debugger.getScriptSource'].includes(request.method)) {
+          devtool.send(JSON.stringify({id:request.id,sessionId:request.sessionId,
+            error:{code:-32000,message:'MTS debugging requires Worker mode'}}),current);
+          return;
+        }
+        client.call('devtool_dispatch',[current,payload]).catch(fail);
+      },
+      onDetach:()=>{void client.call('devtool_detach',[generation]);}});
+    client.onLynxCDP=(view,type,payload)=>{if(type==='CDP'&&view===generation)devtool?.send(payload,view);};
+    panel.hidden=false;devtool.open(generation);devtoolOpen=true;toggle.textContent='关闭 Lynx DevTool';
   }
-  toggleDevtool.addEventListener('click', async () => {
-    if (devtoolOpen) closeDevtool();
-    else try { await openDevtool(); } catch(error) { loadStatus.textContent = String(error); }
-  });
-  addEventListener('pagehide', closeDevtool);
-  let busy = false;
-  let inFlight = 0;
-  let pumping = false;
-  let lastStatus = 0;
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) window.lynxCanvas?.lynxImages.suspend();
-  });
-  const pointer = (type, event) => {
-    if (!window.lynxCanvas || busy) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left - canvas.clientLeft) * canvas.width / canvas.clientWidth;
-    const y = (event.clientY - rect.top - canvas.clientTop) * canvas.height / canvas.clientHeight;
-    window.lynxCanvas.ccall('dispatch_pointer','number',['number','number','number','number','number'],[type,event.pointerId,x,y,event.timeStamp]);
+  function fail(error) {window.probeErrors.push(String(error));status.textContent=String(error);console.error(error);}
+  toggle.addEventListener('click',()=>{if(devtoolOpen)closeDevtool();else openDevtool().catch(fail);});
+  addEventListener('pagehide',()=>{closeDevtool();client?.close();});
+  const pointer=(type,event)=>{
+    if(!client||busy)return;
+    const rect=canvas.getBoundingClientRect();
+    const x=(event.clientX-rect.left-canvas.clientLeft)*canvas.width/canvas.clientWidth;
+    const y=(event.clientY-rect.top-canvas.clientTop)*canvas.height/canvas.clientHeight;
+    client.call('dispatch_pointer',[type,event.pointerId,x,y,event.timeStamp]).catch(fail);
   };
-  canvas.addEventListener('pointerdown', event => { canvas.setPointerCapture(event.pointerId); pointer(0,event); });
-  canvas.addEventListener('pointermove', event => pointer(1,event));
-  canvas.addEventListener('pointerup', event => pointer(2,event));
-  canvas.addEventListener('pointercancel', event => pointer(3,event));
-  function pump(time) {
-    if (!pumping) return;
-    const module = window.lynxCanvas;
-    if (!busy && !document.hidden && !window.pauseLynxFramePump) {
-      module.ccall('tick',null,['number'],[time]);
-      if (module.ccall('host_error_count','number',[],[]) > 0) {
-        const result=JSON.parse(module.ccall('scene_report','string',[],[]));
-        window.probeErrors.push(...result.errors);
-        status.textContent='Lynx runtime error: '+result.errors.join('; ');
-        pumping=false; return;
-      }
-      if (inFlight < 2 && module.ccall('needs_frame','number',[],[])) {
-        const id=module.ccall('render_frame','number',[],[]);
-        if (id < 0) { window.probeErrors.push('Frame submission failed'); pumping=false; return; }
-        ++inFlight;
-        window.probeDevice.queue.onSubmittedWorkDone().then(() => {
-          module.ccall('release_frames',null,['number'],[id]);
-          --inFlight;
-        }).catch(error => { window.probeErrors.push(String(error)); pumping=false; });
-      }
-      if (time-lastStatus > 250) {
-        const result=JSON.parse(module.ccall('scene_report','string',[],[]));
-        window.probeResult=result;
-        const animated=module.lynxImages.inspect().filter(image=>image.animated);
-        const backends=[...new Set(animated.map(image=>image.backend).filter(Boolean))];
-        const failures=animated.filter(image=>image.failed).map(image=>image.error);
-        status.textContent='Lynx / QJS · '+result.nodes+' nodes · '+result.frames+' frames · GPU in flight: '+result.pendingFrames
-          + '\nBTS：Worker · MTS / 布局 / 绘制：主线程'
-          + (backends.length?'\n动图解码：'+backends.join(' / '):'')
-          + (failures.length?'\n动图加载失败：'+failures.join('; '):'');
-        lastStatus=time;
-      }
-    }
-    requestAnimationFrame(pump);
-  }
-  document.addEventListener('visibilitychange', () => { if(!document.hidden && window.lynxCanvas) lastStatus=0; });
-  input.addEventListener('change', () => {
-    button.disabled = busy || !input.files.length;
-    loadStatus.textContent = input.files.length ? '已选择：' + input.files[0].name : '请选择编译生成的 .lynx.bundle。';
-  });
-  const showReport = result => {
-    window.probeResult = result;
-    status.textContent = 'Lynx bundle 已加载 · QJS / WASM · ' + result.nodes + ' 个原生节点 · Skity WebGPU';
-  };
-  button.addEventListener('click', async () => {
-    const file = input.files[0];
-    if (!file || busy || !window.lynxCanvas) return;
-    const reopenDevtool = devtoolOpen;
-    closeDevtool();
-    busy = true; input.disabled = true; button.disabled = true;
-    loadStatus.dataset.state = 'loading';
-    loadStatus.textContent = '正在加载：' + file.name;
-    let pointer = 0;
-    const module = window.lynxCanvas;
+  canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointer(0,e);});
+  canvas.addEventListener('pointermove',e=>{if(e.buttons)pointer(1,e);});
+  canvas.addEventListener('pointerup',e=>pointer(2,e));
+  canvas.addEventListener('pointercancel',e=>pointer(3,e));
+  document.addEventListener('visibilitychange',()=>{if(client)void client.call('suspend',[document.hidden]);});
+  input.addEventListener('change',()=>{button.disabled=busy||!input.files.length;loadStatus.textContent=input.files.length?'已选择：'+input.files[0].name:'请选择编译生成的 .lynx.bundle。';});
+  button.addEventListener('click',async()=>{
+    const file=input.files[0];if(!file||busy||!client)return;
+    const reopen=devtoolOpen;closeDevtool();busy=true;input.disabled=button.disabled=true;
+    loadStatus.dataset.state='loading';loadStatus.textContent='正在加载：'+file.name;
     try {
-      if (!file.name.endsWith('.bundle')) throw new Error('请选择 LynxJS 编译生成的 .lynx.bundle，不能加载源码。');
-      if (!file.size || file.size > 64 * 1024 * 1024) throw new Error('bundle 必须非空且小于 64 MiB。');
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      await window.probeDevice.queue.onSubmittedWorkDone();
-      module.ccall('release_completed_frames', null, [], []);
-      await new Promise(requestAnimationFrame);
-      pointer = module._malloc(bytes.length);
-      if (!pointer) throw new Error('WASM 内存分配失败。');
-      module.HEAPU8.set(bytes, pointer);
-      const code = module.ccall('load_bundle', 'number', ['number', 'number'], [pointer, bytes.length]);
-      if (code !== 0) throw new Error(module.ccall('bundle_load_error', 'string', [], []));
-      const renderCode = module.ccall('render_scene', 'number', [], []);
-      if (renderCode !== 0) throw new Error('绘制失败：' + renderCode);
-      await window.probeDevice.queue.onSubmittedWorkDone();
-      module.ccall('release_completed_frames', null, [], []);
-      await new Promise(requestAnimationFrame);
-      const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
-      if (result.errors.length) throw new Error(result.errors.join('; '));
-      showReport(result);
-      loadStatus.textContent = '已加载：' + file.name;
-      loadStatus.dataset.state = 'success';
-    } catch (error) {
-      loadStatus.textContent = '加载失败：' + error.message;
-      loadStatus.dataset.state = 'error';
-    } finally {
-      if (pointer) module._free(pointer);
-      busy = false; input.disabled = false; button.disabled = !input.files.length;
-      if (reopenDevtool) await openDevtool();
-    }
+      if(!file.name.endsWith('.bundle'))throw Error('请选择 LynxJS 编译生成的 .lynx.bundle，不能加载源码。');
+      if(!file.size||file.size>64*1024*1024)throw Error('bundle 必须非空且小于 64 MiB。');
+      const result=await client.loadBundle(new Uint8Array(await file.arrayBuffer()));
+      window.probeResult=result.report;
+      loadStatus.dataset.state='success';loadStatus.textContent='已加载：'+file.name;
+    } catch(error){loadStatus.dataset.state='error';loadStatus.textContent='加载失败：'+error.message;}
+    finally{busy=false;input.disabled=false;button.disabled=!input.files.length;if(reopen)await openDevtool();}
   });
   try {
-    if (typeof globalThis.createLynxCanvas !== 'function') {
-      throw new Error('The embedded WASM loader is missing. Rebuild and stage this page.');
-    }
-    if (!navigator.gpu) {
-      if (!window.isSecureContext) throw new Error(
-        'LAN HTTP needs a browser exception for WebGPU. In Chrome open ' +
-        'chrome://flags/#unsafely-treat-insecure-origin-as-secure, add ' +
-        location.origin + ', enable it, and relaunch Chrome.');
-      throw new Error('WebGPU unavailable');
-    }
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) throw new Error('No WebGPU adapter');
-    const device = await adapter.requestDevice();
-    window.probeDevice = device;
-    window.probeAdapter = { vendor: adapter.info.vendor, architecture: adapter.info.architecture,
-      device: adapter.info.device, description: adapter.info.description };
-    device.addEventListener('uncapturederror', event => {
-      window.probeErrors.push(event.error.message);
-      status.textContent = 'GPU error: ' + event.error.message;
+    if(!navigator.gpu)throw Error('WebGPU requires a supported browser and HTTPS or localhost');
+    if(!crossOriginIsolated)throw Error('Workers require COOP/COEP and SharedArrayBuffer');
+    if(mode==='worker'&&!canvas.transferControlToOffscreen)throw Error('OffscreenCanvas unavailable; select main-thread mode');
+    const source=['lynx-wasm-module','lynx-browser-images','lynx-browser-engine'].map(id=>document.getElementById(id).textContent).join('\n');
+    const moduleURL=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));
+    const module=await createLynxCanvas({canvas,mainScriptUrlOrBlob:moduleURL,noInitialRun:true});
+    client=createLynxBrowserClient(module,mode,state=>{
+      if(state.error){fail(Error(state.error));return;}
+      window.probeResult=state.report;window.probeAdapter=state.adapter||window.probeAdapter;
+      status.textContent='Lynx / QJS · '+state.report.nodes+' nodes · '+state.report.frames+' frames · GPU in flight: '+state.report.pendingFrames
+        +'\nBTS：Worker · MTS / 布局 / 绘制：'+(mode==='worker'?'Worker / OffscreenCanvas':'浏览器主线程');
     });
-    if(!crossOriginIsolated)throw new Error('BTS Worker requires COOP/COEP response headers and SharedArrayBuffer.');
-    const workerModuleURL=URL.createObjectURL(new Blob([document.querySelector('#lynx-wasm-module').textContent],{type:'application/javascript'}));
-    const module = await globalThis.createLynxCanvas({ mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
-    window.lynxCanvas = module;
-    document.querySelector('#devtool-controls').hidden = !module._devtool_attach;
-    module.lynxImages = createLynxBrowserImages(module, device);
-    const code = module.ccall('main', 'number', [], []);
-    if (code !== 0) throw new Error('WASM initialization failed: ' + code + ': ' + module.ccall('bundle_load_error','string',[],[]));
-    const result = JSON.parse(module.ccall('scene_report', 'string', [], []));
-    if (!result.frames) throw new Error('No rendered frame');
-    await device.queue.onSubmittedWorkDone();
-    module.ccall('release_completed_frames', null, [], []);
-    await new Promise(requestAnimationFrame);
-    showReport(result);
-    pumping=true; requestAnimationFrame(pump);
-    input.disabled = false;
-    loadStatus.textContent = '内置示例已加载，可选择你编译的 .lynx.bundle。';
-  } catch (error) {
-    window.probeErrors.push(String(error));
-    status.textContent = String(error);
-    console.error(error);
-  }
+    window.lynxCanvas=client;
+    await client.ready;
+    document.querySelector('#devtool-controls').hidden=!module._devtool_attach;
+    input.disabled=false;loadStatus.textContent='内置示例已加载，可选择你编译的 .lynx.bundle。';
+  } catch(error){fail(error);}
 })();
 </script>

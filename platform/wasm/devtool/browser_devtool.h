@@ -4,6 +4,8 @@
 #ifndef PLATFORM_WASM_DEVTOOL_BROWSER_DEVTOOL_H_
 #define PLATFORM_WASM_DEVTOOL_BROWSER_DEVTOOL_H_
 #include "base/include/fml/message_loop_impl.h"
+#include "devtool/lynx_devtool/js_debug/js/inspector_java_script_debugger_impl.h"
+#include "devtool/lynx_devtool/js_debug/lepus/inspector_lepus_debugger_impl.h"
 #include "devtool/lynx_devtool/lynx_devtool_ng.h"
 #include "platform/wasm/browser_bts_worker.h"
 #include "platform/wasm/browser_task_thread.h"
@@ -48,15 +50,31 @@ class BrowserDevTool final : public devtool::LynxDevToolNG {
       : LynxDevToolNG(true,
                       std::make_shared<devtool::LynxDevToolMediator>(
                           BrowserDevToolRunner(), BrowserDevToolRunner())) {}
+  void SetCompilerDebugInfo(std::string debug_info) {
+    compiler_debug_info_ = std::move(debug_info);
+  }
+  // Called on Window, away from both runtime threads. StopDebug uses the
+  // existing Inspector command queue and wakes its existing pause loop.
+  void StopDebug() {
+    devtool_mediator_->GetJSDebugger()->StopDebug();
+    devtool_mediator_->GetLepusDebugger()->StopDebug();
+  }
   std::shared_ptr<runtime::js::InspectorRuntimeObserverNG> Init(
       tasm::TemplateAssembler* assembler,
       std::shared_ptr<std::atomic<bool>> alive) {
     const auto main = fml::AdoptRef<fml::TaskRunner>(
         new PageTaskRunner(base::UIThread::GetRunner(), std::move(alive)));
-    return devtool_mediator_->Init(
+    auto observer = devtool_mediator_->Init(
         {assembler, main, tasm::BTSWorkerTaskRunner(), main, true, 0, nullptr},
         shared_from_this());
+    devtool::DevToolConfig::SetFetchDebugInfo(true, true);
+    devtool_mediator_->GetLepusDebugger()->SetDebugInfoProvider(
+        [data = compiler_debug_info_](const std::string&) { return data; });
+    return observer;
   }
+
+ private:
+  std::string compiler_debug_info_;
 };
 }  // namespace lynx::wasm
 #endif

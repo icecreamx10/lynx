@@ -34,6 +34,11 @@ if args.target == 'bundle_canvas':
         raise RuntimeError('The bundle HTML must contain exactly one image adapter marker')
     image_adapter = re.sub(r'</script', r'<\\/script', image_adapter, flags=re.IGNORECASE)
     html = html.replace('/* LYNX_BROWSER_IMAGES */', image_adapter)
+if args.target == 'bundle_canvas':
+    engine = (root / 'platform/wasm/browser-engine.js').read_text() + '\n' + (root / 'platform/wasm/browser-client.js').read_text()
+    if html.count('/* LYNX_BROWSER_ENGINE */') != 1:
+        raise RuntimeError('Missing browser engine marker')
+    html = html.replace('/* LYNX_BROWSER_ENGINE */', re.sub(r'</script', r'<\\/script', engine, flags=re.IGNORECASE))
 site = root / args.site
 site.mkdir(parents=True, exist_ok=True)
 temporary = site / "index.html.new"
