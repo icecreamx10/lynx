@@ -38,10 +38,19 @@ for source, destination in [
         (fixtures / 'images/index.html', site / 'images/index.html'),
         (fixtures / 'interactive/index.html', site / 'interactive/index.html')]:
     html = source.read_text()
+    # Wait inside the host error boundary before it checks isolation or creates WASM.
+    marker = "    if(!navigator.gpu)" if destination == site / 'index.html' else "    if (typeof globalThis.createLynxCanvas"
+    if marker not in html: raise RuntimeError('Missing engine startup boundary')
+    html = html.replace(marker, '    await window.lynxIsolationReady;\n' + marker, 1)
+    html = html.replace('<script>Error.stackTraceLimit', '<script src="/isolation-bootstrap.js"></script>\n<script>Error.stackTraceLimit', 1)
+    if '/isolation-bootstrap.js' not in html:
+        html = html.replace('<script id="lynx-wasm-module">', '<script src="/isolation-bootstrap.js"></script>\n<script id="lynx-wasm-module">', 1)
     html = html.replace('<h1>Lynx Bundle · WASM Canvas</h1>',
                         '<h1>Lynx Bundle · WASM Canvas</h1>' + nav + fonts)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(html)
+for name in ['isolation-worker.js', 'isolation-bootstrap.js']:
+    shutil.copy2(root / 'platform/wasm' / name, site / name)
 (site / '_headers').write_text('/*\n  Cross-Origin-Opener-Policy: same-origin\n'
                               '  Cross-Origin-Embedder-Policy: require-corp\n'
                               '  Cross-Origin-Resource-Policy: same-origin\n')

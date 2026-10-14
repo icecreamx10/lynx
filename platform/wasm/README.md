@@ -645,4 +645,10 @@ Only staged public demo assets are copied. Serve the output on HTTPS with
 `Cross-Origin-Embedder-Policy: require-corp` on every response. The generated
 `_headers` declares these for compatible static hosts. Verify the host applies
 these headers: plain GitHub Pages does not provide custom response headers.
+The package also supplies a same-origin isolation Service Worker for static
+hosts that ignore `_headers`. Before WASM starts, it activates the worker and
+reloads once to obtain COOP/COEP-protected responses. It does not cache assets
+or user bundles. Servers that supply isolation headers skip registration.
+This fallback requires a top-level HTTPS/localhost page and Service Worker
+support; verify `crossOriginIsolated` on the deployed page.
 Use a browser with WebGPU for the canvas and Chrome for the embedded frontend.
