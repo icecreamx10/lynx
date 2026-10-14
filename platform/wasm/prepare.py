@@ -116,6 +116,10 @@ def main():
         key = f"third_party/{name}"
         declared_dependency(skity, key, graphics[key])
 
+    textra_revision = runpy.run_path(str(ROOT / "dependencies/revision.py"))["TEXTRA"]
+    git_dependency(ROOT / "out/textra-source",
+                   "https://github.com/lynx-family/lynx-textra.git", textra_revision)
+
     font = ROOT / "out/Roboto-Regular.ttf"
     if not font.exists():
         urllib.request.urlretrieve(
@@ -124,6 +128,19 @@ def main():
     if not license_path.exists():
         urllib.request.urlretrieve(
             "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/OFL.txt", license_path)
+    for family, filename, output in [
+        ("notosanssc", "NotoSansSC%5Bwght%5D.ttf", "NotoSansSC.ttf"),
+        ("notoemoji", "NotoEmoji%5Bwght%5D.ttf", "NotoEmoji.ttf"),
+        ("notosansarabic", "NotoSansArabic%5Bwdth,wght%5D.ttf", "NotoSansArabic.ttf"),
+    ]:
+        font_path = ROOT / "out" / output
+        if not font_path.exists():
+            urllib.request.urlretrieve(
+                f"https://raw.githubusercontent.com/google/fonts/main/ofl/{family}/{filename}", font_path)
+        license_path = ROOT / "out" / (output + ".OFL.txt")
+        if not license_path.exists():
+            urllib.request.urlretrieve(
+                f"https://raw.githubusercontent.com/google/fonts/main/ofl/{family}/OFL.txt", license_path)
     print("Canvas probe dependencies ready.")
 
 

@@ -22,6 +22,11 @@ emcmake cmake -S out/skity-source -B out/skity-wasm -G Ninja \
   -DSKITY_GL_BACKEND=OFF -DSKITY_MTL_BACKEND=OFF -DSKITY_VK_BACKEND=OFF \
   -DSKITY_CODEC_MODULE=OFF -DSKITY_IO_MODULE=OFF -DSKITY_SW_RENDERER=ON
 cmake --build out/skity-wasm -j "${PROBE_JOBS:-8}"
+if [[ "${PROBE_TARGET:-static_canvas}" == "bundle_canvas" ]]; then
+  emcmake cmake -S platform/wasm/textra -B out/textra-wasm -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DTEXTRA_SOURCE="$probe_root/out/textra-source"
+  cmake --build out/textra-wasm -j "${PROBE_JOBS:-8}"
+fi
 mkdir -p out/Wasm
 python3 - <<'PY'
 import json

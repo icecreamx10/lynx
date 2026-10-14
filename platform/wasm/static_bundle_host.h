@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 #ifndef PLATFORM_WASM_STATIC_BUNDLE_HOST_H_
 #define PLATFORM_WASM_STATIC_BUNDLE_HOST_H_
+#include "platform/wasm/browser_text.h"
 #include <atomic>
 #include <cstdio>
 
@@ -254,11 +255,10 @@ class CanvasPaintingContext : public PaintingContextPlatformImpl {
   bool HasEnableUIOperationBatching() override { return true; }
   LayoutResult MeasureText(Element* element, float width, int width_mode,
                            float height, int height_mode) override;
-  // This prototype uses a single-line text adapter, with no separate shaping
-  // or alignment pass. ElementManager still owns CSS and Starlight layout.
   void DispatchLayoutBefore(Element*) override {}
-  void AlignText(Element*) override {}
-  void DestroyText(Element*) override {}
+  void AlignText(Element* element) override { texts.Align(element); }
+  void DestroyText(Element* element) override { texts.Erase(element); }
+  lynx::wasm::BrowserText texts;
 
  private:
   std::vector<std::string>& errors_;
