@@ -77,8 +77,13 @@ def main():
                          init_globals={"root_dir": str(ROOT)})["deps"]
     for name in ["build", "third_party/quickjs/src", "third_party/modp_b64"]:
         declared_dependency(ROOT, name, deps[name])
+    if os.environ.get("PROBE_INSPECTOR") == "1":
+        declared_dependency(ROOT, "third_party/zlib", deps["third_party/zlib"])
     apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm.patch")
     apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm-threads.patch")
+
+    apply_patch(ROOT / "third_party/quickjs/src",
+                ROOT / "platform/wasm/patches/primjs-wasm-profiler.patch")
 
     shared = runpy.run_path(str(ROOT / "dependencies/DEPS.tools_shared"),
                            init_globals={"root_dir": str(ROOT)})["deps"]

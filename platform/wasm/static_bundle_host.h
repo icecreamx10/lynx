@@ -27,6 +27,8 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
       int32_t, Viewport = Viewport{}) override {
     return {};
   }
+  std::shared_ptr<runtime::js::InspectorRuntimeObserverNG>
+      inspector_runtime_observer;
   TemplateAssembler* owner = nullptr;
   std::shared_ptr<std::atomic<bool>> alive =
       std::make_shared<std::atomic<bool>>(true);

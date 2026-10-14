@@ -5,6 +5,7 @@
 #ifndef DEVTOOL_LYNX_DEVTOOL_JS_DEBUG_LEPUS_INSPECTOR_LEPUS_DEBUGGER_IMPL_H_
 #define DEVTOOL_LYNX_DEVTOOL_JS_DEBUG_LEPUS_INSPECTOR_LEPUS_DEBUGGER_IMPL_H_
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 
@@ -21,6 +22,13 @@ class InspectorLepusDebuggerImpl : public JavaScriptDebuggerNG {
       const std::shared_ptr<LynxDevToolMediator>& devtool_mediator);
   ~InspectorLepusDebuggerImpl() override = default;
 
+  // Direct assembler hosts can provide already-fetched compiler debug data.
+  // Install before loading a context; native hosts retain their platform
+  // facade.
+  void SetDebugInfoProvider(
+      std::function<std::string(const std::string&)> provider) {
+    debug_info_provider_ = std::move(provider);
+  }
   void SetPreExecute(bool pre_execute);
   void TakeOver(const std::shared_ptr<InspectorLepusDebuggerImpl>& other);
 
@@ -45,9 +53,13 @@ class InspectorLepusDebuggerImpl : public JavaScriptDebuggerNG {
 
   void UpdateTarget();
 
+  // Call from outside the MTS thread when detaching a host connection.
+  void StopDebug();
+
   void SetRecordID(int64_t record_id);
 
  private:
+  std::function<std::string(const std::string&)> debug_info_provider_;
   std::shared_ptr<InspectorLepusObserverImpl> observer_;
   // There may be multiple lepus contexts if the LynxView contains lazy
   // components, and each context needs a delegate. So we use a map to manage

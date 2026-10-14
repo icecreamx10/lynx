@@ -61,6 +61,10 @@ executable("static_canvas") {
 }
 
 executable("bundle_canvas") {
+  _browser_pool_size = "1"
+  if (enable_inspector) {
+    _browser_pool_size = "3"
+  }
   output_extension = "js"
   inputs = [
     "app/dist/main.lynx.bundle",
@@ -72,7 +76,9 @@ executable("bundle_canvas") {
     "../../core/services/event_report/event_tracker_platform_impl.cc",
     "browser_bts_delegate.cc",
     "browser_bts_worker.cc",
+    "browser_task_thread.cc",
     "browser_images.cc",
+    "browser_host.cc",
     "browser_message_loop.cc",
     "browser_platform.cc",
     "browser_text.cc",
@@ -97,15 +103,27 @@ executable("bundle_canvas") {
     "../../core:lynx_native",
     "../../third_party/quickjs",
   ]
+  if (enable_inspector) {
+    sources += [
+      "devtool/browser_transport.cc",
+      "../../devtool/embedder/core/global_devtool_platform_embedder.cc",
+    ]
+    deps += [
+      "../../devtool/lynx_devtool:lynx_devtool_group",
+      "../../devtool/base_devtool/native:base_devtool",
+    ]
+  }
   cflags = [ "--use-port=emdawnwebgpu" ]
   ldflags = [
     "--use-port=emdawnwebgpu",
     "-sUSE_HARFBUZZ=1",
-    "-sINITIAL_MEMORY=33554432",
+    "-sOFFSCREENCANVAS_SUPPORT=1",
+    "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=['\$GL']",
     "-sFILESYSTEM=1",
     "-sALLOW_MEMORY_GROWTH=1",
     "-sSTACK_SIZE=2097152",
-    "-sPTHREAD_POOL_SIZE=1",
+    "-sINITIAL_MEMORY=33554432",
+    "-sPTHREAD_POOL_SIZE=" + _browser_pool_size,
     "-sALLOW_BLOCKING_ON_MAIN_THREAD=0",
     "-sASSERTIONS=1",
     "-sEXPORT_NAME=createLynxCanvas",
@@ -118,6 +136,14 @@ executable("bundle_canvas") {
     "--embed-file",
     rebase_path("//out/lynx_core.js", root_build_dir) + "@/lynx_core.js",
   ]
+  if (enable_inspector) {
+    inputs += [ "app/dist/devtool-debug.json" ]
+    ldflags += [
+      "--embed-file",
+      rebase_path("app/dist/devtool-debug.json", root_build_dir) +
+          "@/devtool-debug.json",
+    ]
+  }
   libs = [
     "c++",
     "//out/skity-wasm/libskity.a",

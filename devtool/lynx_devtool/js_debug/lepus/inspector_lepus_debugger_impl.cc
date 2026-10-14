@@ -62,6 +62,7 @@ void InspectorLepusDebuggerImpl::DecodeDebugInfo(const std::string &debug_info,
 }
 
 std::string InspectorLepusDebuggerImpl::GetDebugInfo(const std::string &url) {
+  if (debug_info_provider_) return debug_info_provider_(url);
   auto sp = devtool_platform_facade_wp_.lock();
   CHECK_NULL_AND_LOG_RETURN_VALUE(
       sp, "lepus debug: devtool_platform_facade_ is null", "");
@@ -172,6 +173,13 @@ void InspectorLepusDebuggerImpl::RunOnTargetThread(base::closure &&closure,
     if (it.second) {
       it.second->RequestInterrupt([try_run]() mutable { try_run(); });
     }
+  }
+}
+
+void InspectorLepusDebuggerImpl::StopDebug() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  for (const auto& entry : delegates_) {
+    entry.second->StopDebug(kDefaultViewID);
   }
 }
 

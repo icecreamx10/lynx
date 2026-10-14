@@ -96,7 +96,7 @@ globalThis.createLynxBitmapAnimation = function(bytes, type, maxDimension) {
   need(width>0 && height>0 && width<=maxDimension && height<=maxDimension && width*height<=16*1024*1024,'Animation exceeds texture size limit');
   need(frames.length>0,'Animated image has no frames');
   for(const f of frames)need(f.width>0 && f.height>0 && f.x+f.width<=width && f.y+f.height<=height);
-  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+  const canvas=(typeof document==='undefined' ? new OffscreenCanvas(width,height) : document.createElement('canvas'));canvas.width=width;canvas.height=height;
   const ctx=canvas.getContext('2d');need(ctx,'Browser cannot compose animated frames');
   let backup=null,last=-1,closed=false;
   const clear=(x,y,w,h,transparent=false)=>{
@@ -120,7 +120,7 @@ globalThis.createLynxBitmapAnimation = function(bytes, type, maxDimension) {
             if(previous.disposal===3 && backup){ctx.clearRect(0,0,width,height);ctx.drawImage(backup,0,0);}
           }
           if(f.disposal===3) {
-            if(!backup){backup=document.createElement('canvas');backup.width=width;backup.height=height;}
+            if(!backup){backup=(typeof document==='undefined' ? new OffscreenCanvas(width,height) : document.createElement('canvas'));backup.width=width;backup.height=height;}
             const saved=backup.getContext('2d');saved.clearRect(0,0,width,height);saved.drawImage(canvas,0,0);
           }
           if(f.replace)ctx.clearRect(f.x,f.y,f.width,f.height);

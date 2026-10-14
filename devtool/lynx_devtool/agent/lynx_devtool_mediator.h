@@ -65,6 +65,22 @@ class LynxDevToolMediator
       public LynxDevToolMediatorBase {
  public:
   LynxDevToolMediator();
+  LynxDevToolMediator(fml::RefPtr<fml::TaskRunner> devtool_runner,
+                      fml::RefPtr<fml::TaskRunner> event_runner);
+
+  // Embedders that own a TemplateAssembler directly can install the same
+  // agents and observers without manufacturing a LynxShell.
+  struct Host {
+    tasm::TemplateAssembler* tasm;
+    fml::RefPtr<fml::TaskRunner> tasm_runner;
+    fml::RefPtr<fml::TaskRunner> js_runner;
+    fml::RefPtr<fml::TaskRunner> ui_runner;
+    bool forward_lepus_console = false;
+    int64_t record_id = 0;
+    shell::LynxShell* shell = nullptr;
+  };
+  std::shared_ptr<runtime::js::InspectorRuntimeObserverNG> Init(
+      const Host& host, const std::shared_ptr<LynxDevToolNG>& devtool);
   ~LynxDevToolMediator() override = default;
 
  public:

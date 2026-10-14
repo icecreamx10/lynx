@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <emscripten.h>
+#include <emscripten/threading.h>
 #include <pthread.h>
 #include <webgpu/webgpu.h>
 
@@ -12,6 +13,8 @@
 #include <deque>
 #include <fstream>
 #include <memory>
+#include <mutex>
+#include <numeric>
 #include <skity/gpu/gpu_context_web.hpp>
 #include <string>
 #include <unordered_map>
@@ -26,8 +29,12 @@
 #include "core/renderer/starlight/layout/layout_object.h"
 #include "core/renderer/starlight/style/layout_computed_style.h"
 #include "core/shell/runtime/mts/mts_runtime.h"
+#include "platform/wasm/browser_host.h"
 #include "platform/wasm/browser_images.h"
 #include "platform/wasm/static_bundle_host.h"
+#if ENABLE_INSPECTOR
+#include "platform/wasm/devtool/browser_devtool.h"
+#endif
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
 
@@ -37,6 +44,15 @@ namespace {
 namespace sl = lynx::starlight;
 
 namespace tasm = lynx::tasm;
+#if ENABLE_INSPECTOR
+struct DevToolEndpoint {
+  std::shared_ptr<lynx::wasm::BrowserDevTool> tool;
+  std::shared_ptr<std::atomic<bool>> alive;
+  std::atomic<int> view{0};
+};
+std::mutex endpoint_mutex;
+std::shared_ptr<DevToolEndpoint> endpoint;
+#endif
 std::unique_ptr<tasm::StaticBundleDelegate> delegate;
 std::string load_error;
 int bundle_sequence = 0;
@@ -158,6 +174,21 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   auto candidate = std::make_unique<tasm::TemplateAssembler>(
       *candidate_delegate, std::move(elements), nullptr, id, false, options);
   candidate_delegate->owner = candidate.get();
+#if ENABLE_INSPECTOR
+  auto candidate_devtool = std::make_shared<lynx::wasm::BrowserDevTool>();
+  // Compiler function IDs belong to one exact bundle. Never apply the built-in
+  // fixture's debug metadata to another uploaded bundle.
+  std::ifstream packaged("/main.lynx.bundle", std::ios::binary);
+  const std::vector<uint8_t> packaged_bytes(
+      (std::istreambuf_iterator<char>(packaged)), {});
+  if (bytes == packaged_bytes) {
+    std::ifstream info("/devtool-debug.json", std::ios::binary);
+    candidate_devtool->SetCompilerDebugInfo(
+        std::string((std::istreambuf_iterator<char>(info)), {}));
+  }
+  candidate_delegate->inspector_runtime_observer =
+      candidate_devtool->Init(candidate.get(), candidate_delegate->alive);
+#endif
   candidate_manager->UpdateViewport(800, SLMeasureModeDefinite, 500,
                                     SLMeasureModeDefinite, false);
   auto pipeline = std::make_shared<tasm::PipelineOptions>();
@@ -190,6 +221,20 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   }
   // Validate before replacing the displayed page. Keep the retired delegate
   // alive until its TemplateAssembler has been destroyed.
+#if ENABLE_INSPECTOR
+  // Stop the old BTS debugger before queuing runtime destruction on its worker.
+  {
+    std::lock_guard<std::mutex> lock(endpoint_mutex);
+    if (endpoint) {
+      endpoint->view = 0;
+      endpoint->tool->Detach();
+    }
+    auto next = std::make_shared<DevToolEndpoint>();
+    next->tool = std::move(candidate_devtool);
+    next->alive = candidate_delegate->alive;
+    endpoint = std::move(next);
+  }
+#endif
   auto retired_delegate = std::move(delegate);
   auto retired_assembler = std::move(assembler);
   delegate = std::move(candidate_delegate);
@@ -215,6 +260,11 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
 bool LoadScene() {
   lynx::fml::MessageLoop::EnsureInitializedForCurrentThread();
   lynx::base::UIThread::Init();
+#if ENABLE_INSPECTOR
+  auto& env = tasm::LynxEnv::GetInstance();
+  env.SetBoolLocalEnv("lynx_debug_enabled", true);
+  env.SetBoolLocalEnv("enable_devtool", true);
+#endif
   std::ifstream input("/main.lynx.bundle", std::ios::binary);
   return LoadBundle(
       std::vector<uint8_t>((std::istreambuf_iterator<char>(input)), {}));
@@ -309,6 +359,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE const char* scene_report() {
                 (delegate->background ? delegate->background->Pending() : 0));
   writer.Key("btsThread");
   writer.Uint(lynx::tasm::BTSWorkerThreadId());
+  writer.Key("browserThread");
+  writer.Uint64(
+      reinterpret_cast<uintptr_t>(emscripten_main_runtime_thread_id()));
+  writer.Key("renderWorker");
+  writer.Bool(lynx::wasm::IsRenderWorker());
+  writer.Key("renderThread");
+  writer.Uint(reinterpret_cast<uintptr_t>(pthread_self()));
   writer.Key("mainThread");
   writer.Uint(reinterpret_cast<uintptr_t>(pthread_self()));
   writer.Key("btsWorkerBusy");
@@ -580,3 +637,37 @@ int main() {
   wgpuInstanceRelease(instance);
   return render_scene();
 }
+
+#if ENABLE_INSPECTOR
+extern "C" EMSCRIPTEN_KEEPALIVE int devtool_attach() {
+  std::lock_guard<std::mutex> lock(endpoint_mutex);
+  if (!endpoint || !*endpoint->alive) return 0;
+  if (endpoint->view) endpoint->tool->Detach();
+  tasm::LynxEnv::GetInstance().SetBoolLocalEnv("devtool_connected", true);
+  endpoint->view = endpoint->tool->Attach("wasm://local.lynx.bundle");
+  return endpoint->view;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void devtool_dispatch(int view,
+                                                      const char* payload) {
+  std::shared_ptr<DevToolEndpoint> current;
+  {
+    std::lock_guard<std::mutex> lock(endpoint_mutex);
+    current = endpoint;
+  }
+  if (!current || view != current->view || !view || !payload) return;
+  lynx::wasm::BrowserDevToolRunner()->PostTask(
+      [current, view, message = std::string(payload)] {
+        if (*current->alive && current->view == view)
+          current->tool->DispatchMessage(current->tool->GetMessageSender(),
+                                         "CDP", message);
+      });
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void devtool_detach(int view) {
+  std::lock_guard<std::mutex> lock(endpoint_mutex);
+  if (!endpoint || endpoint->view != view || !view) return;
+  endpoint->tool->StopDebug();
+  endpoint->tool->Detach();
+  endpoint->view = 0;
+  tasm::LynxEnv::GetInstance().SetBoolLocalEnv("devtool_connected", false);
+}
+#endif

@@ -172,7 +172,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     });
     if(!crossOriginIsolated)throw new Error('BTS Worker requires COOP/COEP response headers and SharedArrayBuffer.');
     const workerModuleURL=URL.createObjectURL(new Blob([document.querySelector('#lynx-wasm-module').textContent],{type:'application/javascript'}));
-    const module = await globalThis.createLynxCanvas({ mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
+    const module = await globalThis.createLynxCanvas({ canvas, mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
     module.lynxResources = createLynxWebResourceProvider({provider:window.lynxResourceProvider});
     module.lynxFonts = createLynxBrowserFonts(module, module.lynxResources, window.lynxFontResources);

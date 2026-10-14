@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lynx Bundle · WASM Canvas</title>
+<link rel="icon" href="data:,">
+<style>
+body { margin: 24px; background: #080e18; color: #d7e4fa; font: 15px system-ui; }
+canvas { display: block; width: 800px; height: 500px; border: 1px solid #29354c; }
+pre { white-space: pre-wrap; max-width: 800px; }
+.loader { box-sizing:border-box; max-width:802px; padding:18px; margin-bottom:18px; background:#111c2e; border:1px solid #29354c; border-radius:10px; }
+.loader h2 { margin:0 0 10px; font-size:18px; }
+.loader p { margin:8px 0; line-height:1.6; }
+.loader .hint { color:#9fb0cc; font-size:13px; }
+.controls { display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap; }
+input { flex:1; min-width:240px; font:inherit; }
+button { border:0; border-radius:6px; padding:10px 16px; background:#7eb9ff; color:#09172b; font:600 14px system-ui; cursor:pointer; }
+button:disabled { opacity:.5; cursor:default; }
+button:focus-visible, input:focus-visible { outline:2px solid #b2d6ff; outline-offset:3px; }
+#load-status { min-height:22px; color:#bdd9ff; }
+canvas { max-width:100%; height:auto; touch-action:none; }
+.workspace { display:grid; grid-template-columns:minmax(0, 1fr); gap:24px; align-items:start; }
+.preview-pane, #devtool-controls { min-width:0; }
+#devtool-panel { height:650px; margin-top:16px; border:1px solid #29354c; }
+@media (min-width:1200px) {
+  .workspace { grid-template-columns:minmax(480px, 802px) minmax(560px, 1fr); }
+  #devtool-controls { position:sticky; top:24px; }
+  #devtool-panel { height:calc(100vh - 150px); min-height:600px; }
+}
+</style>
+<h1>Lynx Bundle · WASM Canvas</h1>
+<main class="workspace">
+<div class="preview-pane">
+<section class="loader" aria-labelledby="loader-title">
+  <h2 id="loader-title">加载本地 Lynx Bundle</h2>
+  <p><strong>文件必须由 LynxJS 工具链编译生成</strong>，例如使用 <code>@lynx-js/rspeedy</code> 执行 <code>rspeedy build</code> 得到的 <code>.lynx.bundle</code>。</p>
+  <p class="hint">不能直接加载 JSX / TSX / JS 源码。当前实验版支持 view/text/image、PNG/JPEG/WebP 静态图和 GIF/WebP 动图（需浏览器支持）、点击事件、React 状态更新和 rAF 动画；TTText 多行文字及按需加载的外置中文、阿拉伯文和 Emoji 字体；复杂组件尚未接入。</p>
+  <div class="controls">
+    <label>MTS / 渲染宿主 <select id="thread-mode">
+      <option value="worker">Worker（支持暂停和单步）</option>
+      <option value="main">浏览器主线程</option>
+    </select></label>
+    <input id="bundle-file" type="file" accept=".lynx.bundle,.bundle" aria-label="选择 LynxJS 编译的 bundle" disabled>
+    <button id="load-bundle" type="button" disabled>加载 bundle</button>
+  </div>
+  <p id="load-status" role="status" aria-live="polite">引擎初始化后可选择文件。</p>
+</section>
+<canvas id="canvas" width="800" height="500"></canvas>
+<pre id="status">正在加载内置示例…</pre>
+</div>
+<section id="devtool-controls" hidden>
+  <div class="controls"><button id="toggle-devtool" type="button">打开 Lynx DevTool</button>
+    <span>官方前端 · 原生 Lynx Inspector · MessagePort</span></div>
+  <div id="devtool-panel" hidden></div>
+</section>
+</main>
+
+<script>Error.stackTraceLimit = 80;</script>
+<script id="lynx-wasm-module">
+/* LYNX_WASM_MODULE */
+</script>
+<script id="lynx-browser-images">
+/* LYNX_BROWSER_IMAGES */
+</script>
+<script id="lynx-browser-engine">
+/* LYNX_BROWSER_ENGINE */
+</script>
+<script>
+(async () => {
+  const status=document.querySelector('#status'),canvas=document.querySelector('#canvas');
+  const input=document.querySelector('#bundle-file'),button=document.querySelector('#load-bundle');
+  const loadStatus=document.querySelector('#load-status'),select=document.querySelector('#thread-mode');
+  const mode=new URLSearchParams(location.search).get('mts')==='main'?'main':'worker';
+  select.value=mode;
+  select.addEventListener('change',()=>{const url=new URL(location.href);url.searchParams.set('mts',select.value);location.assign(url);});
+  window.probeErrors=[];
+  let client,devtool=null,devtoolOpen=false,busy=false;
+  const toggle=document.querySelector('#toggle-devtool'),panel=document.querySelector('#devtool-panel');
+  function closeDevtool() {
+    devtool?.close();devtool=null;devtoolOpen=false;panel.hidden=true;
+    toggle.textContent='打开 Lynx DevTool';
+  }
+  async function openDevtool() {
+    const {LynxDevToolHost}=await import('/devtools/host.js');
+    closeDevtool();
+    const generation=await client.call('devtool_attach');
+    if(!generation)throw Error('Lynx Inspector is not ready');
+    devtool=new LynxDevToolHost({container:panel,
+      dispatch:(payload,current)=>{
+        const request=JSON.parse(payload);
+        // Window cannot block in the native pause loop. Keep the main-thread
+        // renderer usable and report this host capability instead of freezing.
+        if(mode==='main' && request.sessionId && request.method.startsWith('Debugger.') &&
+           !['Debugger.disable','Debugger.getScriptSource'].includes(request.method)) {
+          devtool.send(JSON.stringify({id:request.id,sessionId:request.sessionId,
+            error:{code:-32000,message:'MTS debugging requires Worker mode'}}),current);
+          return;
+        }
+        client.call('devtool_dispatch',[current,payload]).catch(fail);
+      },
+      onDetach:()=>{void client.call('devtool_detach',[generation]);}});
+    client.onLynxCDP=(view,type,payload)=>{if(type==='CDP'&&view===generation)devtool?.send(payload,view);};
+    panel.hidden=false;devtool.open(generation);devtoolOpen=true;toggle.textContent='关闭 Lynx DevTool';
+  }
+  function fail(error) {window.probeErrors.push(String(error));status.textContent=String(error);console.error(error);}
+  toggle.addEventListener('click',()=>{if(devtoolOpen)closeDevtool();else openDevtool().catch(fail);});
+  addEventListener('pagehide',()=>{closeDevtool();client?.close();});
+  const pointer=(type,event)=>{
+    if(!client||busy)return;
+    const rect=canvas.getBoundingClientRect();
+    const x=(event.clientX-rect.left-canvas.clientLeft)*canvas.width/canvas.clientWidth;
+    const y=(event.clientY-rect.top-canvas.clientTop)*canvas.height/canvas.clientHeight;
+    client.call('dispatch_pointer',[type,event.pointerId,x,y,event.timeStamp]).catch(fail);
+  };
+  canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointer(0,e);});
+  canvas.addEventListener('pointermove',e=>{if(e.buttons)pointer(1,e);});
+  canvas.addEventListener('pointerup',e=>pointer(2,e));
+  canvas.addEventListener('pointercancel',e=>pointer(3,e));
+  document.addEventListener('visibilitychange',()=>{if(client)void client.call('suspend',[document.hidden]);});
+  input.addEventListener('change',()=>{button.disabled=busy||!input.files.length;loadStatus.textContent=input.files.length?'已选择：'+input.files[0].name:'请选择编译生成的 .lynx.bundle。';});
+  button.addEventListener('click',async()=>{
+    const file=input.files[0];if(!file||busy||!client)return;
+    const reopen=devtoolOpen;closeDevtool();busy=true;input.disabled=button.disabled=true;
+    loadStatus.dataset.state='loading';loadStatus.textContent='正在加载：'+file.name;
+    try {
+      if(!file.name.endsWith('.bundle'))throw Error('请选择 LynxJS 编译生成的 .lynx.bundle，不能加载源码。');
+      if(!file.size||file.size>64*1024*1024)throw Error('bundle 必须非空且小于 64 MiB。');
+      const result=await client.loadBundle(new Uint8Array(await file.arrayBuffer()));
+      window.probeResult=result.report;
+      loadStatus.dataset.state='success';loadStatus.textContent='已加载：'+file.name;
+    } catch(error){loadStatus.dataset.state='error';loadStatus.textContent='加载失败：'+error.message;}
+    finally{busy=false;input.disabled=false;button.disabled=!input.files.length;if(reopen)await openDevtool();}
+  });
+  try {
+    if(!navigator.gpu)throw Error('WebGPU requires a supported browser and HTTPS or localhost');
+    if(!crossOriginIsolated)throw Error('Workers require COOP/COEP and SharedArrayBuffer');
+    if(mode==='worker'&&!canvas.transferControlToOffscreen)throw Error('OffscreenCanvas unavailable; select main-thread mode');
+    const source=['lynx-wasm-module','lynx-browser-images','lynx-browser-engine'].map(id=>document.getElementById(id).textContent).join('\n');
+    const moduleURL=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));
+    const module=await createLynxCanvas({canvas,mainScriptUrlOrBlob:moduleURL,noInitialRun:true});
+    client=createLynxBrowserClient(module,mode,state=>{
+      if(state.error){fail(Error(state.error));return;}
+      window.probeResult=state.report;window.probeAdapter=state.adapter||window.probeAdapter;
+      status.textContent='Lynx / QJS · '+state.report.nodes+' nodes · '+state.report.frames+' frames · GPU in flight: '+state.report.pendingFrames
+        +'\nBTS：Worker · MTS / 布局 / 绘制：'+(mode==='worker'?'Worker / OffscreenCanvas':'浏览器主线程');
+    });
+    window.lynxCanvas=client;
+    await client.ready;
+    document.querySelector('#devtool-controls').hidden=!module._devtool_attach;
+    input.disabled=false;loadStatus.textContent='内置示例已加载，可选择你编译的 .lynx.bundle。';
+    if(module._devtool_attach) await openDevtool();
+  } catch(error){fail(error);}
+})();
+</script>

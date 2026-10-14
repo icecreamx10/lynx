@@ -12,8 +12,8 @@ does not lay out or render the Lynx page.
 The shared development branch is `codex/qjs-wasm-canvas` in
 [`icecreamx10/lynx`](https://github.com/icecreamx10/lynx). It contains the
 accepted WASM canvas host, BTS worker, TTText, browser image decoding,
-external fonts and Web Resource Provider. Inspector integration is being
-developed separately and will be merged after its owner completes it.
+external fonts, Web Resource Provider and the native Inspector integration.
+The Inspector build also runs MTS/layout/rendering on a dedicated worker.
 Create feature branches from this branch and target it with pull requests.
 
 ### First checkout
@@ -95,7 +95,7 @@ The recorded browser acceptance environment is macOS ARM64, Chrome 152,
 Playwright WebKit 26.5 and Apple WebGPU/Metal. Other build hosts and physical
 mobile browsers require their own acceptance; this is not native-platform
 regression coverage. Text selection/editing, full Clay component coverage,
-Inspector, and native lazy-bundle/external-JS resource loading are outside
+native lazy-bundle/external-JS resource loading are outside
 this shared baseline's accepted scope.
 
 Localhost HTTP works for WebGPU. For LAN access use HTTPS with the supplied
@@ -509,3 +509,121 @@ node platform/wasm/verify.mjs
 It executes hand-written `scene.js` in QJS and maps JSON to Starlight nodes;
 it reports `fullLynxBundle: false`. Set `LYNX_CANVAS_INTERACTIVE=0` when building
 the bundle host to use the earlier static ReactLynx sample instead.
+
+
+## Embedded official Lynx DevTool (experimental)
+
+The opt-in browser integration links the existing `LynxDevToolNG` backend:
+its native DOM/CSS/Overlay agents, runtime/Console observers, inspector clients,
+target routing, breakpoint handling and pause queue. The browser code supplies
+host initialization, task runners, lifetime guards and CDP transport only.
+It does not replace these protocol implementations.
+
+```bash
+LYNX_CANVAS_DEVTOOL=1 PROBE_INSPECTOR=1 \
+  PROBE_SITE=out/Wasm/devtool-site bash platform/wasm/build-bundle.sh
+python3 platform/wasm/serve.py --port 6140 --site out/Wasm/devtool-site
+PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/devtool/verify-port.mjs
+PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/devtool/verify-native.mjs
+```
+
+The pinned official Elements/Console/Sources frontend opens automatically.
+Wide screens show the Bundle preview and DevTool side by side; narrow screens
+stack them. Use **关闭 Lynx DevTool** to close it and the same button to reopen it. Frontend assets and compiler source maps are self-hosted alongside the
+preview. Inspector is disabled by default; the normal build does not link its
+backend or show the entry point. POSIX signal-based CPU sampling is unavailable
+in WASM; the engine uses its existing non-POSIX profiler implementation.
+
+Browser threading defaults to a render pthread worker: MTS, TemplateAssembler,
+layout, Skity/WebGPU, image decoding, frame leases and the transferred
+OffscreenCanvas all belong to that worker. BTS and CDP dispatch each have their
+own persistent pthread worker. The Window owns the loader and official frontend;
+its asynchronous host requests cannot touch the native tree or GPU objects.
+CDP dispatch bypasses the render task queue, so the existing Inspector can receive
+resume/step/disable commands while MTS blocks in its native pause loop.
+
+Use the **MTS / 渲染宿主** selector or `?mts=main` to retain browser-main-thread
+execution. Switching modes reloads the instance because canvas transfer is
+one-way. Both modes use the same engine and asynchronous `lynxCanvas.call()` API.
+Main-thread mode supports rendering, interaction and BTS debugging; the embedded
+frontend reports that MTS pause/breakpoints require Worker mode. No custom pause
+loop, debugger statement interception or replacement CDP agent is used.
+
+The fixture build emits the compiler's existing `lepus_debug` data through its
+public `beforeEmit` hook. The native host feeds that data into the
+existing Inspector before loading the context. It applies only to the exact
+built-in bundle bytes; uploading an unrelated bundle never reuses its function
+IDs. Native platform hosts retain their existing platform-facade resource path.
+Inspector callbacks to a retired page are discarded before touching its assembler. Each
+iframe connection has a distinct generation, and the bridge allocates unique
+wire request ids to discard late responses after reconnecting.
+
+Validated against the real DevTool backend:
+
+- Native document tree, inline/computed styles and GPU pixel changes after
+  `CSS.setStyleTexts`.
+- Existing Overlay highlighting changes real GPU pixels and restores them.
+- BTS and MTS `Runtime.evaluate`, and the existing Console event path.
+- BTS generated source, resolved source-line breakpoint, paused call frames,
+  local-variable inspection, step over, resume and detach while paused.
+- Official frontend initialization, Elements tree and source-mapped TSX editor; repeated transport
+  close/reconnect, stale-response isolation, and bundle replacement followed by
+  a working counter. Reports and screenshots are under
+  `out/Wasm/validation-devtool-{port,native}`.
+
+`devtool/verify-render-worker.mjs` additionally verifies native MTS source-line
+breakpoints, local variables, step-over, step-into on a compiled MTS tap handler,
+resume and detach while paused. During pause, the Window heartbeat and BTS keep
+running while render requests remain queued. Rendering acceptance covers MTS
+pixel changes, a React counter, continuous animation, idle suspension, bundle
+replacement, static/animated image decoding and switching back to main mode.
+Results are in `out/Wasm/validation-render-threading/validation.json`.
+`devtool/verify-official-mts.mjs` also checks the actual frontend's Step Over and
+Resume buttons, mapped TSX, and closing the iframe while MTS is paused. Its report
+and screenshot are in `out/Wasm/validation-official-mts`.
+
+Prepare its two upload fixtures using the existing app (preserve copies before
+rebuilding the built-in DevTool fixture):
+
+```bash
+# Run from the repository root.
+(cd platform/wasm/app && LYNX_CANVAS_INTERACTIVE=1 npm run build)
+cp platform/wasm/app/dist/main.lynx.bundle out/Wasm/interactive.lynx.bundle
+(cd platform/wasm/app && LYNX_CANVAS_IMAGES=1 npm run build)
+cp platform/wasm/app/dist/main.lynx.bundle out/Wasm/images.lynx.bundle
+(cd platform/wasm/app && LYNX_CANVAS_DEVTOOL=1 npm run build -- --mode development)
+# Rebuild/stage the Inspector host as above, then:
+PLAYWRIGHT_PATH=/path/to/playwright PROBE_URL=http://127.0.0.1:6140/ \
+  node platform/wasm/devtool/verify-render-worker.mjs
+```
+
+`INTERACTIVE_BUNDLE`, `IMAGES_BUNDLE` and `PROBE_OUT` can override fixture/report
+paths. The older raw-`ccall` render harnesses target the earlier synchronous host;
+the thread-aware acceptance above uses the shared asynchronous host interface.
+Native geometry/picking, debug sidecar uploads for arbitrary bundles, and other
+platform/browser regressions remain separate work. Source maps and compiler
+MTS metadata packaged here belong to the built-in fixture. This is a Chrome /
+macOS WebGPU acceptance result, not a cross-platform performance claim.
+
+
+### Resource Provider with render workers
+
+Both rendering modes use the same `window.lynxResourceProvider` and
+`window.lynxFontResources` customization points. In Worker mode, resource
+requests and cancellation travel to Window, where the provider runs. Owned
+byte responses return to the render task runner before native font registration
+or image decoding. This preserves abort/reload behavior while MTS is paused.
+Fonts remain external and are loaded on demand; no font is embedded in WASM.
+
+```bash
+PLAYWRIGHT_PATH=/path/to/playwright PROBE_URL=http://127.0.0.1:6140/ \
+  node platform/wasm/devtool/verify-worker-resources.mjs
+PLAYWRIGHT_PATH=/path/to/playwright PROBE_URL=http://127.0.0.1:6140/ \
+  node platform/wasm/devtool/verify-official-mts.mjs
+```
+
+Build the text fixture with `platform/wasm/build-text.sh` before rebuilding the
+Inspector fixture, or set `TEXT_BUNDLE` to a compiled copy. The resource gate
+checks lazy startup, Chinese/Arabic/Emoji shaping, actual WebGPU glyph pixels,
+React text reflow, a custom Window provider, font reuse on reload, and narrow
+screen layout. The official MTS gate also checks default-open and wide layout.

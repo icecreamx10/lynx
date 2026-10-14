@@ -8,6 +8,9 @@
 #include <memory>
 
 #include "base/include/fml/thread.h"
+#if defined(__EMSCRIPTEN__)
+#include "core/base/threading/task_runner_manufactor.h"
+#endif
 #include "base/include/log/logging.h"
 #include "devtool/lynx_devtool/agent/inspector_util.h"
 
@@ -22,9 +25,20 @@ namespace devtool {
 
 class LynxDevToolMediatorBase {
  public:
-  LynxDevToolMediatorBase() {
-    default_task_runner_ = GetDevToolsThread().GetTaskRunner();
-    cdp_event_listener_runner_ = GetCDPEventListenerThread().GetTaskRunner();
+  explicit LynxDevToolMediatorBase(
+      fml::RefPtr<fml::TaskRunner> devtool_runner = nullptr,
+      fml::RefPtr<fml::TaskRunner> event_runner = nullptr) {
+#if defined(__EMSCRIPTEN__)
+    // Browser global services default to the existing UI event loop. Creating
+    // a native FML thread here would synchronously wait on the browser UI.
+    if (!devtool_runner) devtool_runner = base::UIThread::GetRunner();
+    if (!event_runner) event_runner = base::UIThread::GetRunner();
+#endif
+    default_task_runner_ =
+        devtool_runner ? devtool_runner : GetDevToolsThread().GetTaskRunner();
+    cdp_event_listener_runner_ =
+        event_runner ? event_runner
+                     : GetCDPEventListenerThread().GetTaskRunner();
   }
   virtual ~LynxDevToolMediatorBase() = default;
 
