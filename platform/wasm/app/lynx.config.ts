@@ -5,9 +5,14 @@
 import { defineConfig } from '@lynx-js/rspeedy';
 import { pluginReactLynx } from '@lynx-js/react-rsbuild-plugin';
 export default defineConfig({
-  plugins: [pluginReactLynx()],
+  plugins: [pluginReactLynx({ debugInfoOutside: process.env.LYNX_CANVAS_DEVTOOL !== '1' })],
+  dev: process.env.LYNX_CANVAS_DEVTOOL === '1'
+    ? { hmr: false, liveReload: false, assetPrefix: '/' }
+    : {},
   source: {
-    entry: process.env.LYNX_CANVAS_TEXT === '1'
+    entry: process.env.LYNX_CANVAS_DEVTOOL === '1'
+      ? './src/devtool.tsx'
+      : process.env.LYNX_CANVAS_TEXT === '1'
       ? './src/text.tsx'
       : process.env.LYNX_CANVAS_IMAGE_LIFECYCLE === '1'
       ? './src/image-lifecycle.tsx'

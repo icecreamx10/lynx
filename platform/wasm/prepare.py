@@ -80,6 +80,9 @@ def main():
     apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm.patch")
     apply_patch(ROOT / "build", ROOT / "platform/wasm/patches/buildroot-wasm-threads.patch")
 
+    apply_patch(ROOT / "third_party/quickjs/src",
+                ROOT / "platform/wasm/patches/primjs-wasm-profiler.patch")
+
     shared = runpy.run_path(str(ROOT / "dependencies/DEPS.tools_shared"),
                            init_globals={"root_dir": str(ROOT)})["deps"]
     declared_dependency(ROOT, "buildtools/tools_shared", shared["buildtools/tools_shared"])

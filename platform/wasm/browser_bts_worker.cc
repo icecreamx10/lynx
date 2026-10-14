@@ -12,55 +12,19 @@
 #include "base/include/fml/message_loop.h"
 #include "core/runtime/common/bindings/modules/lynx_native_module_manager.h"
 #include "platform/wasm/browser_bts_delegate.h"
+#include "platform/wasm/browser_task_thread.h"
 namespace lynx::tasm {
-namespace {
-struct WorkerThread {
-  std::mutex mutex;
-  fml::RefPtr<fml::TaskRunner> runner;
-  std::vector<base::closure> queued;
-  std::atomic<uint32_t> id{0};
-  WorkerThread() {
-    pthread_t thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 2 * 1024 * 1024);
-    int result = pthread_create(
-        &thread, &attr,
-        [](void* arg) -> void* {
-          auto* self = static_cast<WorkerThread*>(arg);
-          auto runner = fml::MessageLoop::EnsureInitializedForCurrentThread()
-                            .GetTaskRunner();
-          self->id = reinterpret_cast<uintptr_t>(pthread_self());
-          {
-            std::lock_guard<std::mutex> lock(self->mutex);
-            self->runner = runner;
-            for (auto& task : self->queued) runner->PostTask(std::move(task));
-            self->queued.clear();
-          }
-          // Keep the pthread's event loop alive without blocking it or the UI.
-          emscripten_exit_with_live_runtime();
-          return nullptr;
-        },
-        this);
-    pthread_attr_destroy(&attr);
-    if (result != 0) std::abort();
-    pthread_detach(thread);
-  }
-};
-WorkerThread& Thread() {
-  static auto* thread = new WorkerThread();
-  return *thread;
+fml::RefPtr<fml::TaskRunner> BTSWorkerTaskRunner() {
+  static auto runner = wasm::CreateBrowserTaskThread();
+  return runner;
 }
-}  // namespace
 void PostToBTSWorker(base::closure task) {
-  auto& thread = Thread();
-  std::lock_guard<std::mutex> lock(thread.mutex);
-  if (thread.runner)
-    thread.runner->PostTask(std::move(task));
-  else
-    thread.queued.push_back(std::move(task));
+  BTSWorkerTaskRunner()->PostTask(std::move(task));
 }
-uint32_t BTSWorkerThreadId() { return Thread().id; }
+namespace {
+std::atomic<uint32_t> worker_id{0};
+}
+uint32_t BTSWorkerThreadId() { return worker_id; }
 struct BrowserBTSWorker::State {
   std::unique_ptr<shell::BTSRuntime> runtime;
   std::shared_ptr<BrowserFrameClock> clock =
@@ -83,9 +47,11 @@ BrowserBTSWorker::BrowserBTSWorker(StaticBundleDelegate* host, int id)
     data.SetValue(lepus::Value::Clone(data.GetValue()).ToLepusValue(true));
   auto main_runner = fml::MessageLoop::GetCurrent().GetTaskRunner();
   auto life = host->alive;
-  PostToBTSWorker([state = state_, host, life, id, main_runner,
+  auto observer = host->inspector_runtime_observer;
+  PostToBTSWorker([state = state_, host, life, id, main_runner, observer,
                    script = std::move(script)]() mutable {
     if (!state->alive || !*life) return;
+    worker_id = reinterpret_cast<uintptr_t>(pthread_self());
     auto backend = std::make_unique<runtime::BrowserBTSDelegate>(
         host, life, main_runner, state->clock);
     PageOptions options(id);
@@ -96,7 +62,7 @@ BrowserBTSWorker::BrowserBTSWorker(StaticBundleDelegate* host, int id)
         std::move(backend), "", shell::FORCE_USE_LIGHT_WEIGHT_JS_ENGINE,
         options);
     state->runtime->Init(std::make_shared<pub::LynxNativeModuleManager>(),
-                         nullptr, {});
+                         observer, {});
     state->runtime->OnJSSourcePrepared(
         std::move(script->bundle), script->props, script->page, script->dsl,
         script->mode, script->url, script->options, script->trace);

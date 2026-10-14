@@ -19,6 +19,7 @@ class StaticBundleDelegate;
 // whose runtime and callbacks are created/destroyed only on that worker.
 void PostToBTSWorker(base::closure task);
 uint32_t BTSWorkerThreadId();
+fml::RefPtr<fml::TaskRunner> BTSWorkerTaskRunner();
 class BrowserBTSWorker {
  public:
   struct State;

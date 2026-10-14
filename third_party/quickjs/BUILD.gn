@@ -40,7 +40,7 @@ config("quickjs_private_config") {
     "LYNX_DEV",
     "CONFIG_VERSION=\"2019-09-10\"",
   ]
-  if (!(is_wasm && enable_wasm_static_canvas)) {
+  if (!(is_wasm && enable_wasm_static_canvas) || enable_inspector) {
     defines += [ "ENABLE_QUICKJS_DEBUGGER" ]
   }
   if (enable_lepusng_bytecode_opt) {
@@ -150,7 +150,7 @@ source_set("quickjs_source") {
     "src/src/basic/log/logging.cc",
     "src/src/basic/log/primjs_logging.cc",
   ]
-  if (is_wasm && enable_wasm_static_canvas) {
+  if (is_wasm && enable_wasm_static_canvas && !enable_inspector) {
     # Browser single-thread probe has no signal-based profiler or inspector.
     _runtime_sources = []
     foreach(_source, sources) {

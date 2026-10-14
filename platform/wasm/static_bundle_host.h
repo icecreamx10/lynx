@@ -27,6 +27,8 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
       int32_t, Viewport = Viewport{}) override {
     return {};
   }
+  std::shared_ptr<runtime::js::InspectorRuntimeObserverNG>
+      inspector_runtime_observer;
   TemplateAssembler* owner = nullptr;
   std::shared_ptr<std::atomic<bool>> alive =
       std::make_shared<std::atomic<bool>>(true);
@@ -250,8 +252,7 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
 };
 class CanvasPaintingContext : public PaintingContextPlatformImpl {
  public:
-  explicit CanvasPaintingContext(std::vector<std::string>& errors)
-      : errors_(errors) {}
+  explicit CanvasPaintingContext(std::vector<std::string>&) {}
   bool HasEnableUIOperationBatching() override { return true; }
   LayoutResult MeasureText(Element* element, float width, int width_mode,
                            float height, int height_mode) override;
@@ -260,8 +261,6 @@ class CanvasPaintingContext : public PaintingContextPlatformImpl {
   void DestroyText(Element* element) override { texts.Erase(element); }
   lynx::wasm::BrowserText texts;
 
- private:
-  std::vector<std::string>& errors_;
 };
 class CanvasPropBundleCreator : public PropBundleCreator {
  public:

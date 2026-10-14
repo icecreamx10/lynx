@@ -23,7 +23,7 @@ if (is_android || is_harmony) {
   devtool_common_js_debug_sources +=
       [ "helper/js_debug_helper_android_harmony.cc" ]
 } else {
-  if (is_win) {
+  if (is_win || is_wasm) {
     devtool_common_js_debug_sources += [ "helper/js_debug_helper_default.cc" ]
   } else {
     devtool_common_js_debug_sources += [ "helper/js_debug_helper_posix.cc" ]

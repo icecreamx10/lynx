@@ -34,23 +34,29 @@ import os
 from pathlib import Path
 sdk = str(Path(os.environ['LYNX_WASM_EMSDK']).resolve())
 threaded = os.environ.get('PROBE_TARGET') == 'bundle_canvas'
-Path('out/Wasm/args.gn').write_text('''target_cpu = "wasm"
+inspector = os.environ.get('PROBE_INSPECTOR') == '1'
+Path('out/Wasm/args.gn').write_text(('''target_cpu = "wasm"
 is_debug = false
 jsengine_type = "quickjs"
 enable_v8 = false
 enable_clay = false
-enable_inspector = false
+enable_inspector = INSPECTOR_ENABLED
 enable_napi_binding = false
 enable_recorder = false
 enable_logbox = false
 use_sysroot = false
 enable_lto = false
 enable_wasm_static_canvas = true
-emsdk_dir = ''' + json.dumps(sdk) + '\nwasm_enable_pthreads = ' + str(threaded).lower() + '\n')
+emsdk_dir = ''' + json.dumps(sdk) + '\nwasm_enable_pthreads = ' + str(threaded).lower() + '\n').replace('INSPECTOR_ENABLED', str(inspector).lower()))
 PY
 buildtools/gn/gn gen out/Wasm
 probe_ninja="$(command -v ninja || true)"
 if [[ -z "$probe_ninja" ]]; then probe_ninja="$probe_root/buildtools/ninja/ninja"; fi
 "$probe_ninja" -C out/Wasm -j "${PROBE_JOBS:-8}" "platform/wasm:${PROBE_TARGET:-static_canvas}"
-python3 platform/wasm/stage.py --target "${PROBE_TARGET:-static_canvas}" --site "${PROBE_SITE:-out/Wasm/site}"
+probe_stage_args=()
+if [[ "${PROBE_INSPECTOR:-0}" == "1" ]]; then probe_stage_args+=(--devtool); fi
+python3 platform/wasm/stage.py --target "${PROBE_TARGET:-static_canvas}" --site "${PROBE_SITE:-out/Wasm/site}" "${probe_stage_args[@]}"
+if [[ "${PROBE_INSPECTOR:-0}" == "1" ]]; then
+  python3 platform/wasm/devtool/prepare.py --site "${PROBE_SITE:-out/Wasm/site}"
+fi
 printf 'Preview: python3 platform/wasm/serve.py\n'

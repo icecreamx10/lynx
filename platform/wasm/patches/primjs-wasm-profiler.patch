@@ -1,0 +1,65 @@
+diff --git a/src/inspector/cpuprofiler/cpu_profiler.cc b/src/inspector/cpuprofiler/cpu_profiler.cc
+index d9611c3..29f99d6 100644
+--- a/src/inspector/cpuprofiler/cpu_profiler.cc
++++ b/src/inspector/cpuprofiler/cpu_profiler.cc
+@@ -6,7 +6,7 @@
+ // Licensed under the Apache License Version 2.0 that can be found in the
+ // LICENSE file in the root directory of this source tree.
+ 
+-#if !defined(_WIN32)
++#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+ #include "inspector/cpuprofiler/cpu_profiler.h"
+ 
+ #include <assert.h>
+diff --git a/src/inspector/cpuprofiler/profile_generator.cc b/src/inspector/cpuprofiler/profile_generator.cc
+index 570da01..8cf34c4 100644
+--- a/src/inspector/cpuprofiler/profile_generator.cc
++++ b/src/inspector/cpuprofiler/profile_generator.cc
+@@ -6,7 +6,7 @@
+ // Licensed under the Apache License Version 2.0 that can be found in the
+ // LICENSE file in the root directory of this source tree.
+ 
+-#if !defined(_WIN32)
++#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+ #include "inspector/cpuprofiler/profile_generator.h"
+ 
+ #include <assert.h>
+diff --git a/src/inspector/cpuprofiler/profile_tree.cc b/src/inspector/cpuprofiler/profile_tree.cc
+index 46b6a37..f07fea4 100644
+--- a/src/inspector/cpuprofiler/profile_tree.cc
++++ b/src/inspector/cpuprofiler/profile_tree.cc
+@@ -6,7 +6,7 @@
+ // Licensed under the Apache License Version 2.0 that can be found in the
+ // LICENSE file in the root directory of this source tree.
+ 
+-#if !defined(_WIN32)
++#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+ #include "inspector/cpuprofiler/profile_tree.h"
+ 
+ #include <assert.h>
+diff --git a/src/inspector/cpuprofiler/profiler_sampling.cc b/src/inspector/cpuprofiler/profiler_sampling.cc
+index ace1316..89ab297 100644
+--- a/src/inspector/cpuprofiler/profiler_sampling.cc
++++ b/src/inspector/cpuprofiler/profiler_sampling.cc
+@@ -6,7 +6,7 @@
+ // Licensed under the Apache License Version 2.0 that can be found in the
+ // LICENSE file in the root directory of this source tree.
+ 
+-#if !defined(_WIN32)
++#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+ #include "inspector/cpuprofiler/profiler_sampling.h"
+ 
+ #include <algorithm>
+diff --git a/src/inspector/cpuprofiler/tracing_cpu_profiler.cc b/src/inspector/cpuprofiler/tracing_cpu_profiler.cc
+index a5d42a7..a8e6ea5 100644
+--- a/src/inspector/cpuprofiler/tracing_cpu_profiler.cc
++++ b/src/inspector/cpuprofiler/tracing_cpu_profiler.cc
+@@ -7,7 +7,7 @@
+ // LICENSE file in the root directory of this source tree.
+ 
+ #include "quickjs/include/quickjs-inner.h"
+-#if !defined(_WIN32)
++#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+ #include "gc/trace-gc.h"
+ #include "inspector/cpuprofiler/profile_generator.h"
+ #include "inspector/cpuprofiler/tracing_cpu_profiler.h"

@@ -30,10 +30,22 @@ try {
  await page.evaluate(()=>host.close());
  assert.equal(await page.locator('iframe').count(),0);
  for(let i=0;i<3;i++){
+  const previous=await page.evaluate(()=>requests.length);
   await page.evaluate(g=>host.open(g),8+i);
-  await page.waitForFunction(()=>host.attached,null,{timeout:30000});
+  await page.waitForFunction(previous=>host.attached && requests.length>previous+5,previous,{timeout:30000});
+  const staleDropped=await page.evaluate(()=>{
+   let sent=0;const port=host.port;const post=port.postMessage.bind(port);
+   port.postMessage=(...args)=>{++sent;post(...args);};
+   host.send(JSON.stringify({id:requests[0].id,result:{}}),host.generation);
+   port.postMessage=post;
+   return sent===0;
+  });
+  assert(staleDropped,'Late response from a retired connection leaked');
   await page.evaluate(()=>host.close());
  }
+ const wireIds=await page.evaluate(()=>requests.map(request=>request.id));
+ assert.equal(new Set(wireIds).size,wireIds.length);
+ checks.lateResponseDropped=true;
  checks.reconnects=3;
  assert.deepEqual(errors,[]);
  await fs.mkdir('out/Wasm/validation-devtool-port',{recursive:true});

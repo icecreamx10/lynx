@@ -5,12 +5,14 @@
 """Stage an atomic, self-contained HTML preview with no runtime asset requests."""
 from pathlib import Path
 import argparse
+import json
 import re
 import shutil
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--target', default='static_canvas', choices=['static_canvas', 'bundle_canvas'])
 parser.add_argument('--site', default='out/Wasm/site')
+parser.add_argument('--devtool', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[2]
 output = root / "out/Wasm"
@@ -38,4 +40,20 @@ temporary = site / "index.html.new"
 temporary.write_text(html)
 temporary.replace(site / "index.html")
 shutil.copy2(root / "out/Roboto-OFL.txt", site / "Roboto-OFL.txt")
+if args.devtool:
+    # The compiler places source maps inside debug-metadata.json. Serve its
+    # original maps at their declared paths for the official Sources panel.
+    metadata = root / 'platform/wasm/app/dist/.rspeedy/main/debug-metadata.json'
+    if not metadata.is_file():
+        raise RuntimeError('Build the DevTool fixture in development mode first')
+    for artifact in json.loads(metadata.read_text()).get('artifacts', []):
+        for source in artifact.get('debugSources', []):
+            if source.get('kind') != 'source-map' or 'map' not in source:
+                continue
+            relative = Path(source['path'])
+            if relative.is_absolute() or '..' in relative.parts:
+                raise RuntimeError('Invalid compiler source-map path')
+            destination = site / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(source['map']))
 print(f"Staged self-contained HTML: {len(html.encode())} bytes")

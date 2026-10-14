@@ -23,6 +23,17 @@ s = sdk.read_text()
 old = 'function lr(e){return new ar(e)}'
 assert s.count(old) == 1, 'Pinned frontend factory changed'
 sdk.write_text(s.replace(old, 'function lr(e){return globalThis.LynxMessagePortConnection?new globalThis.LynxMessagePortConnection(e):new ar(e)}'))
+# The release applies showPanels to every TabbedPane, including source-file
+# tabs and Styles/Computed. In explicit port mode filter only the main panels.
+legacy = frontend / 'ui/legacy/legacy.js'
+s = legacy.read_text()
+old = 'if(r&&"undefined"!==r&&!r.split(",")?.includes(i))return;'
+new = ('if(r&&"undefined"!==r&&'
+       '(new URLSearchParams(location.search).get("transport")!=="messageport"||'
+       'this.element.classList.contains("main-tabbed-pane"))&&'
+       '!r.split(",")?.includes(i))return;')
+assert s.count(old) == 1, 'Pinned frontend panel filter changed'
+legacy.write_text(s.replace(old, new))
 html = (site / 'inspector.html').read_text()
 # Keep the preview self-hosted, including optional React plugin dependencies.
 for name,url in {

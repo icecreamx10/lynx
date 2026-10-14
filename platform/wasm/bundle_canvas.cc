@@ -31,6 +31,9 @@
 #include "core/shell/runtime/mts/mts_runtime.h"
 #include "platform/wasm/browser_images.h"
 #include "platform/wasm/static_bundle_host.h"
+#if ENABLE_INSPECTOR
+#include "platform/wasm/devtool/browser_devtool.h"
+#endif
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
 
@@ -38,6 +41,10 @@ namespace {
 namespace sl = lynx::starlight;
 
 namespace tasm = lynx::tasm;
+#if ENABLE_INSPECTOR
+std::shared_ptr<lynx::wasm::BrowserDevTool> devtool;
+int devtool_view = 0;
+#endif
 std::unique_ptr<tasm::StaticBundleDelegate> delegate;
 std::string load_error;
 int bundle_sequence = 0;
@@ -160,6 +167,11 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   auto candidate = std::make_unique<tasm::TemplateAssembler>(
       *candidate_delegate, std::move(elements), nullptr, id, false, options);
   candidate_delegate->owner = candidate.get();
+#if ENABLE_INSPECTOR
+  auto candidate_devtool = std::make_shared<lynx::wasm::BrowserDevTool>();
+  candidate_delegate->inspector_runtime_observer =
+      candidate_devtool->Init(candidate.get(), candidate_delegate->alive);
+#endif
   candidate_manager->UpdateViewport(800, SLMeasureModeDefinite, 500,
                                     SLMeasureModeDefinite, false);
   auto pipeline = std::make_shared<tasm::PipelineOptions>();
@@ -192,6 +204,13 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   }
   // Validate before replacing the displayed page. Keep the retired delegate
   // alive until its TemplateAssembler has been destroyed.
+#if ENABLE_INSPECTOR
+  // Stop the old BTS debugger before queuing runtime destruction on its worker.
+  if (devtool) devtool->Detach();
+  devtool.reset();
+  devtool_view = 0;
+  devtool = std::move(candidate_devtool);
+#endif
   auto retired_delegate = std::move(delegate);
   auto retired_assembler = std::move(assembler);
   delegate = std::move(candidate_delegate);
@@ -215,6 +234,11 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
 bool LoadScene() {
   lynx::fml::MessageLoop::EnsureInitializedForCurrentThread();
   lynx::base::UIThread::Init();
+#if ENABLE_INSPECTOR
+  auto& env = tasm::LynxEnv::GetInstance();
+  env.SetBoolLocalEnv("lynx_debug_enabled", true);
+  env.SetBoolLocalEnv("enable_devtool", true);
+#endif
   std::ifstream input("/main.lynx.bundle", std::ios::binary);
   return LoadBundle(
       std::vector<uint8_t>((std::istreambuf_iterator<char>(input)), {}));
@@ -560,3 +584,32 @@ int main() {
   wgpuInstanceRelease(instance);
   return render_scene();
 }
+
+#if ENABLE_INSPECTOR
+extern "C" EMSCRIPTEN_KEEPALIVE int devtool_attach() {
+  if (!devtool) return 0;
+  if (devtool_view) devtool->Detach();
+  tasm::LynxEnv::GetInstance().SetBoolLocalEnv("devtool_connected", true);
+  devtool_view = devtool->Attach("wasm://local.lynx.bundle");
+  return devtool_view;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void devtool_dispatch(int view,
+                                                      const char* payload) {
+  if (!devtool || view != devtool_view || !view || !payload) return;
+  auto life = delegate->alive;
+  lynx::wasm::BrowserDevToolRunner()->PostTask(
+      [target = devtool, life, message = std::string(payload)] {
+        if (*life)
+          target->DispatchMessage(target->GetMessageSender(), "CDP", message);
+      });
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void devtool_detach(int view) {
+  if (!devtool || view != devtool_view || !view) return;
+  // Use the existing Inspector's disable command to release a paused BTS.
+  devtool->DispatchMessage(devtool->GetMessageSender(), "CDP",
+      R"({"id":-1,"method":"Debugger.disable"})");
+  devtool->Detach();
+  devtool_view = 0;
+  tasm::LynxEnv::GetInstance().SetBoolLocalEnv("devtool_connected", false);
+}
+#endif

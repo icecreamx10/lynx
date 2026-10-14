@@ -30,6 +30,11 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   <p id="load-status" role="status" aria-live="polite">引擎初始化后可选择文件。</p>
 </section>
 <canvas id="canvas" width="800" height="500"></canvas>
+<section id="devtool-controls" hidden>
+  <div class="controls"><button id="toggle-devtool" type="button">打开 Lynx DevTool</button>
+    <span>官方前端 · 原生 Lynx Inspector · MessagePort</span></div>
+  <div id="devtool-panel" style="height:650px;margin-top:16px" hidden></div>
+</section>
 <pre id="status">正在加载内置示例…</pre>
 
 <script>Error.stackTraceLimit = 80;</script>
@@ -47,6 +52,44 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   const input = document.querySelector('#bundle-file');
   const button = document.querySelector('#load-bundle');
   const loadStatus = document.querySelector('#load-status');
+  let devtool = null;
+  let devtoolOpen = false;
+  let devtoolHostClass;
+  const toggleDevtool = document.querySelector('#toggle-devtool');
+  const devtoolPanel = document.querySelector('#devtool-panel');
+  function closeDevtool() {
+    devtool?.close();
+    devtool = null;
+    devtoolOpen = false;
+    devtoolPanel.hidden = true;
+    toggleDevtool.textContent = '打开 Lynx DevTool';
+  }
+  async function openDevtool() {
+    const module = window.lynxCanvas;
+    if (!module?._devtool_attach) return;
+    if (!devtoolHostClass) {
+      ({LynxDevToolHost:devtoolHostClass} = await import('/devtools/host.js'));
+    }
+    closeDevtool();
+    const generation = module.ccall('devtool_attach', 'number', [], []);
+    if (!generation) throw new Error('Lynx Inspector is not ready');
+    devtool = new devtoolHostClass({container:devtoolPanel,
+      dispatch:(payload, current) => module.ccall('devtool_dispatch', null,
+        ['number','string'], [current,payload]),
+      onDetach:() => module.ccall('devtool_detach', null, ['number'], [generation])});
+    module.onLynxCDP = (view, type, payload) => {
+      if (type === 'CDP' && view === generation) devtool?.send(payload, view);
+    };
+    devtoolPanel.hidden = false;
+    devtool.open(generation);
+    devtoolOpen = true;
+    toggleDevtool.textContent = '关闭 Lynx DevTool';
+  }
+  toggleDevtool.addEventListener('click', async () => {
+    if (devtoolOpen) closeDevtool();
+    else try { await openDevtool(); } catch(error) { loadStatus.textContent = String(error); }
+  });
+  addEventListener('pagehide', closeDevtool);
   let busy = false;
   let inFlight = 0;
   let pumping = false;
@@ -112,6 +155,8 @@ canvas { max-width:100%; height:auto; touch-action:none; }
   button.addEventListener('click', async () => {
     const file = input.files[0];
     if (!file || busy || !window.lynxCanvas) return;
+    const reopenDevtool = devtoolOpen;
+    closeDevtool();
     busy = true; input.disabled = true; button.disabled = true;
     loadStatus.dataset.state = 'loading';
     loadStatus.textContent = '正在加载：' + file.name;
@@ -145,6 +190,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     } finally {
       if (pointer) module._free(pointer);
       busy = false; input.disabled = false; button.disabled = !input.files.length;
+      if (reopenDevtool) await openDevtool();
     }
   });
   try {
@@ -172,6 +218,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     const workerModuleURL=URL.createObjectURL(new Blob([document.querySelector('#lynx-wasm-module').textContent],{type:'application/javascript'}));
     const module = await globalThis.createLynxCanvas({ mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
+    document.querySelector('#devtool-controls').hidden = !module._devtool_attach;
     module.lynxImages = createLynxBrowserImages(module, device);
     const code = module.ccall('main', 'number', [], []);
     if (code !== 0) throw new Error('WASM initialization failed: ' + code + ': ' + module.ccall('bundle_load_error','string',[],[]));

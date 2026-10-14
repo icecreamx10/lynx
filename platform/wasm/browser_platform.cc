@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 
+#include "base/include/log/logging.h"
 #include "core/base/threading/vsync_monitor.h"
 #include "core/renderer/tasm/config.h"
 #include "core/renderer/utils/lynx_env.h"
@@ -48,8 +49,23 @@ std::shared_ptr<VSyncMonitor> VSyncMonitor::Create(bool on_ui) {
 }  // namespace lynx::base
 
 namespace lynx::tasm {
-bool LynxEnv::IsJsDebugEnabled(bool, bool) { return false; }
+bool LynxEnv::IsJsDebugEnabled(bool, bool debuggable) {
+#if ENABLE_INSPECTOR
+  return IsDevToolEnabled() || debuggable;
+#else
+  return false;
+#endif
+}
 }  // namespace lynx::tasm
 namespace lynx::runtime::js::cache {
 std::string JsCacheManager::GetPlatformCacheDir() { return "/tmp"; }
 }  // namespace lynx::runtime::js::cache
+
+#if ENABLE_INSPECTOR
+namespace lynx::base::logging {
+void SetPlatformMinLogLevel(int level) { SetMinLogLevel(level); }
+}  // namespace lynx::base::logging
+namespace lynx::tasm {
+long LynxEnv::GetV8Enabled(bool) { return 0; }
+}  // namespace lynx::tasm
+#endif

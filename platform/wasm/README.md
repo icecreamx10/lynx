@@ -286,3 +286,53 @@ node platform/wasm/verify.mjs
 It executes hand-written `scene.js` in QJS and maps JSON to Starlight nodes;
 it reports `fullLynxBundle: false`. Set `LYNX_CANVAS_INTERACTIVE=0` when building
 the bundle host to use the earlier static ReactLynx sample instead.
+
+
+## Embedded official Lynx DevTool (experimental)
+
+The opt-in browser integration links the existing `LynxDevToolNG` backend:
+its native DOM/CSS/Overlay agents, runtime/Console observers, inspector clients,
+target routing, breakpoint handling and pause queue. The browser code supplies
+host initialization, task runners, lifetime guards and CDP transport only.
+It does not replace these protocol implementations.
+
+```bash
+LYNX_CANVAS_DEVTOOL=1 PROBE_INSPECTOR=1 \
+  PROBE_SITE=out/Wasm/devtool-site bash platform/wasm/build-bundle.sh
+python3 platform/wasm/serve.py --port 6140 --site out/Wasm/devtool-site
+PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/devtool/verify-port.mjs
+PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/devtool/verify-native.mjs
+```
+
+Click **打开 Lynx DevTool** to open the pinned official Elements/Console/Sources
+frontend. Frontend assets and compiler source maps are self-hosted alongside the
+preview. Inspector is disabled by default; the normal build does not link its
+backend or show the entry point. POSIX signal-based CPU sampling is unavailable
+in WASM; the engine uses its existing non-POSIX profiler implementation.
+
+Browser threading: DOM/layout/render and MTS currently run on the browser main
+thread; BTS and CDP dispatch use separate persistent pthread workers. Inspector
+callbacks to a retired page are discarded before touching its assembler. Each
+iframe connection has a distinct generation, and the bridge allocates unique
+wire request ids to discard late responses after reconnecting.
+
+Validated against the real DevTool backend:
+
+- Native document tree, inline/computed styles and GPU pixel changes after
+  `CSS.setStyleTexts`.
+- Existing Overlay highlighting changes real GPU pixels and restores them.
+- BTS and MTS `Runtime.evaluate`, and the existing Console event path.
+- BTS generated source, resolved source-line breakpoint, paused call frames,
+  local-variable inspection, step over, resume and detach while paused.
+- Official frontend initialization, Elements tree and source-mapped TSX editor; repeated transport
+  close/reconnect, stale-response isolation, and bundle replacement followed by
+  a working counter. Reports and screenshots are under
+  `out/Wasm/validation-devtool-{port,native}`.
+
+Remaining acceptance: MTS pause/step requires moving its host execution off the
+browser UI thread. Blocking the existing native pause loop on that thread would
+also block iframe events. MTS breakpoints are **not accepted as supported** by
+this prototype. Native host geometry/picking integration and uploaded bundles'
+associated debug resources also need their own acceptance. The current source
+maps belong to the built-in fixture. This is not a claim that phases 2–4 are all
+complete, nor a cross-platform regression result.
