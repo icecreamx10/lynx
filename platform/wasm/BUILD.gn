@@ -65,10 +65,6 @@ executable("bundle_canvas") {
   inputs = [
     "app/dist/main.lynx.bundle",
     "//out/lynx_core.js",
-    "//out/Roboto-Regular.ttf",
-    "//out/NotoSansSC.ttf",
-    "//out/NotoSansArabic.ttf",
-    "//out/NotoEmoji.ttf",
     "//out/textra-wasm/liblynx_browser_tttext.a",
   ]
   sources = [
@@ -105,7 +101,7 @@ executable("bundle_canvas") {
   ldflags = [
     "--use-port=emdawnwebgpu",
     "-sUSE_HARFBUZZ=1",
-    "-sINITIAL_MEMORY=67108864",
+    "-sINITIAL_MEMORY=33554432",
     "-sFILESYSTEM=1",
     "-sALLOW_MEMORY_GROWTH=1",
     "-sSTACK_SIZE=2097152",
@@ -114,21 +110,13 @@ executable("bundle_canvas") {
     "-sASSERTIONS=1",
     "-sEXPORT_NAME=createLynxCanvas",
     "-sSINGLE_FILE=1",
-    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free','_dispatch_pointer','_tick','_needs_frame','_render_frame','_release_frames','_host_error_count','_image_allocate','_image_complete','_image_playback_event','_test_bts_busy']",
+    "-sEXPORTED_FUNCTIONS=['_main','_render_scene','_scene_report','_release_completed_frames','_verify_corrupt_bundle','_load_bundle','_bundle_load_error','_malloc','_free','_dispatch_pointer','_tick','_needs_frame','_render_frame','_release_frames','_host_error_count','_image_allocate','_image_complete','_image_playback_event','_test_bts_busy','_register_browser_font']",
     "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','HEAPU8','WebGPU']",
     "--embed-file",
     rebase_path("app/dist/main.lynx.bundle", root_build_dir) +
         "@/main.lynx.bundle",
     "--embed-file",
     rebase_path("//out/lynx_core.js", root_build_dir) + "@/lynx_core.js",
-    "--embed-file",
-    rebase_path("//out/Roboto-Regular.ttf", root_build_dir) + "@/font.ttf",
-    "--embed-file",
-    rebase_path("//out/NotoSansSC.ttf", root_build_dir) + "@/cjk.ttf",
-    "--embed-file",
-    rebase_path("//out/NotoSansArabic.ttf", root_build_dir) + "@/arabic.ttf",
-    "--embed-file",
-    rebase_path("//out/NotoEmoji.ttf", root_build_dir) + "@/emoji.ttf",
   ]
   libs = [
     "c++",

@@ -94,6 +94,7 @@ canvas { max-width:100%; height:auto; touch-action:none; }
         status.textContent='Lynx / QJS · '+result.nodes+' nodes · '+result.frames+' frames · GPU in flight: '+result.pendingFrames
           + '\nBTS：Worker · MTS / 布局 / 绘制：主线程'
           + '\n文字：TTText / HarfBuzz / Skity'
+          + '\n字体：'+module.lynxFonts.inspect().map(f=>['Latin','中文','Arabic','Emoji'][f.slot]+': '+f.state+(f.error?' ('+f.error+')':'')).join(' / ')
           + (backends.length?'\n动图解码：'+backends.join(' / '):'')
           + (failures.length?'\n动图加载失败：'+failures.join('; '):'');
         lastStatus=time;
@@ -173,7 +174,10 @@ canvas { max-width:100%; height:auto; touch-action:none; }
     const workerModuleURL=URL.createObjectURL(new Blob([document.querySelector('#lynx-wasm-module').textContent],{type:'application/javascript'}));
     const module = await globalThis.createLynxCanvas({ mainScriptUrlOrBlob:workerModuleURL, preinitializedWebGPUDevice: device, noInitialRun: true });
     window.lynxCanvas = module;
+    module.lynxResources = createLynxWebResourceProvider({provider:window.lynxResourceProvider});
+    module.lynxFonts = createLynxBrowserFonts(module, module.lynxResources, window.lynxFontResources);
     module.lynxImages = createLynxBrowserImages(module, device);
+    await module.lynxFonts.initialize();
     const code = module.ccall('main', 'number', [], []);
     if (code !== 0) throw new Error('WASM initialization failed: ' + code + ': ' + module.ccall('bundle_load_error','string',[],[]));
     const result = JSON.parse(module.ccall('scene_report', 'string', [], []));

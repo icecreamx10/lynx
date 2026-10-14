@@ -3,6 +3,8 @@
 // LICENSE file in the root directory of this source tree.
 #ifndef PLATFORM_WASM_BROWSER_TEXT_H_
 #define PLATFORM_WASM_BROWSER_TEXT_H_
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include "core/renderer/dom/element.h"
@@ -18,6 +20,9 @@ class BrowserText {
  public:
   BrowserText();
   ~BrowserText();
+  void Activate();
+  static bool RegisterFont(int slot, const uint8_t* bytes, size_t size);
+  void InvalidateFonts();
   tasm::LayoutResult Measure(tasm::Element* element, float width,
                              int width_mode, float height, int height_mode);
   void Align(tasm::Element* element);

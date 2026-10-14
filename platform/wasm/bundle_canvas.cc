@@ -31,6 +31,8 @@
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/writer.h"
 
+EM_JS(void, BeginBrowserResourcePage, (), { Module.lynxFonts.beginPage(); });
+
 namespace {
 namespace sl = lynx::starlight;
 
@@ -200,6 +202,8 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   qjs_verified = true;
   frame_count = 0;
   ++bundle_sequence;
+  BeginBrowserResourcePage();
+  text_host->Activate();
   pointers.clear();
   if (images) images->Reset();
   if (retired_delegate) retired_delegate->owner = nullptr;
@@ -412,6 +416,26 @@ extern "C" EMSCRIPTEN_KEEPALIVE void release_frames(int completed) {
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int needs_frame() {
   return delegate && delegate->dirty;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int register_browser_font(int slot,
+                                                          const uint8_t* bytes,
+                                                          int size) {
+  if (size <= 0 || !lynx::wasm::BrowserText::RegisterFont(slot, bytes, size))
+    return 1;
+  if (text_host && root && manager) {
+    text_host->InvalidateFonts();
+    std::function<void(tasm::Element*)> dirty = [&](tasm::Element* node) {
+      if (node->is_text() && !node->is_inline_element() && node->slnode())
+        node->slnode()->MarkDirty();
+      for (auto* child = node->first_child(); child;
+           child = child->next_sibling())
+        dirty(child);
+    };
+    dirty(root);
+    manager->RequestLayout(std::make_shared<tasm::PipelineOptions>());
+    delegate->dirty = true;
+  }
+  return 0;
 }
 extern "C" EMSCRIPTEN_KEEPALIVE int host_error_count() {
   return delegate ? delegate->errors.size() : 0;

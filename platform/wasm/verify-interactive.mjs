@@ -6,10 +6,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const out=path.resolve(process.env.PROBE_OUTPUT || 'out/Wasm/validation-interactive');
 await fs.mkdir(out,{recursive:true});
-const browser=await chromium.launch({executablePath:process.env.CHROME_PATH,headless:true,args:['--enable-unsafe-webgpu']});
+const wk=process.env.PROBE_BROWSER==='webkit';
+const browser=await (wk?webkit:chromium).launch(wk?{headless:true}:{executablePath:process.env.CHROME_PATH,headless:true,args:['--enable-unsafe-webgpu']});
 const page=await browser.newPage({viewport:{width:1000,height:1100}});
 const errors=[], messages=[], requests=[];
 page.on('pageerror',e=>errors.push(String(e)));
@@ -39,8 +40,11 @@ const snapshot=()=>page.evaluate(async()=>{
  return result;
 });
 const checkpoints={};
+const previewOrigin=new URL(process.env.PROBE_URL || 'http://127.0.0.1:6093/').origin;
+const fontRequest=url=>new URL(url).origin===previewOrigin&&/\/fonts\/(Roboto-Regular|NotoSansSC|NotoSansArabic|NotoEmoji)\.ttf$/.test(url);
+const workerRequest=url=>url.startsWith(`blob:${previewOrigin}/`);
 try {
- await page.route('**/*',route=>route.request().resourceType()==='document'?route.continue():route.abort());
+ await page.route('**/*',route=>route.request().resourceType()==='document'||fontRequest(route.request().url())||workerRequest(route.request().url())?route.continue():route.abort());
  await page.goto(process.env.PROBE_URL || 'http://127.0.0.1:6093/',{waitUntil:'networkidle'});
  await page.waitForFunction(()=>window.probeResult || window.probeErrors?.length,{timeout:60000});
  assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);
@@ -87,7 +91,11 @@ try {
  console.log('PASS: continuous animation updates native layout; stop leaves no redraws');
  await fs.writeFile(path.join(out,'animation.png'),Buffer.from(animation2.png.split(',')[1],'base64'));
  await page.screenshot({path:path.join(out,'browser.png')});
- assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);assert.deepEqual(errors,[]);assert.equal(requests.length,1);
+ assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);assert.deepEqual((await read()).errors,[]);assert.deepEqual(errors,[]);
+ assert.equal(requests.filter(url=>!fontRequest(url)&&!workerRequest(url)).length,1);
+ assert(requests.some(url=>url.endsWith('/fonts/Roboto-Regular.ttf')));
+ assert(requests.every(url=>url===requests[0]||fontRequest(url)||workerRequest(url)));
+ assert(requests.filter(workerRequest).length<=1);
  // Reload while an animation is active, then verify no stale callbacks leak.
  await click(620,215);await waitText('Stop animation');await page.waitForTimeout(100);
  await page.locator('#bundle-file').setInputFiles(path.resolve(process.env.PROBE_INITIAL_BUNDLE || 'platform/wasm/app/dist/main.lynx.bundle'));

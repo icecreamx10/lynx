@@ -35,6 +35,7 @@ try {
  await wait(()=>window.probeResult || window.probeErrors?.length);
  assert.deepEqual(await page.evaluate(()=>window.probeErrors),[]);
  await wait(()=>JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).backgroundRuntime);
+ await wait(()=>window.lynxCanvas.lynxFonts.inspect().every(f=>f.state==='loaded'));
  await page.waitForTimeout(500);
  let r=await read();assert.deepEqual(r.errors,[]);assert.notEqual(r.mainThread,r.btsThread);
  for(const id of ['title','wrap','newline','rich','fallback','arabic','center','right','ellipsis','longword','dynamic','nowrap']){

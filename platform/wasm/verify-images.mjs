@@ -9,6 +9,7 @@ import http from 'node:http';
 const require=createRequire(import.meta.url);
 const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const out=path.resolve(process.env.PROBE_OUTPUT || 'out/Wasm/validation-images');
+const imageBundle=path.resolve(process.env.PROBE_IMAGE_BUNDLE || 'platform/wasm/app/dist/main.lynx.bundle');
 await fs.mkdir(out,{recursive:true});
 const isWebKit=process.env.PROBE_BROWSER==='webkit';
 const browser=await (isWebKit?webkit:chromium).launch(isWebKit?{headless:true}:{executablePath:process.env.CHROME_PATH,headless:true,args:['--enable-unsafe-webgpu']});
@@ -164,7 +165,7 @@ try {
  await fs.writeFile(path.join(out,'canvas.png'),Buffer.from(shot.png.split(',')[1],'base64'));
  // Native rejection of stale completion and safe reload while GIF is running.
  const obsolete=(await read()).images.map(r=>r.token);
- await page.locator('#bundle-file').setInputFiles(path.resolve('platform/wasm/app/dist/main.lynx.bundle'));
+ await page.locator('#bundle-file').setInputFiles(imageBundle);
  await page.locator('#load-bundle').click();await wait(()=>document.querySelector('#load-status').dataset.state==='success');
  await wait(()=>JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).images.filter(i=>i.loaded).length===13);
  const reloaded=await read();assert.equal(reloaded.bundleSequence,2);
@@ -222,7 +223,7 @@ try {
  const idle=(await read()).frames;await page.waitForTimeout(400);assert.equal((await read()).frames,idle);
  await lifecycle();assert.equal(slowRequests,3);
  const tokens=(await read()).images.map(i=>i.token);
- await page.locator('#bundle-file').setInputFiles(path.resolve('platform/wasm/app/dist/main.lynx.bundle'));
+ await page.locator('#bundle-file').setInputFiles(imageBundle);
  await page.locator('#load-bundle').click();await wait(()=>document.querySelector('#load-status').dataset.state==='success');
  releaseSlow.shift()();
  await wait(()=>JSON.parse(window.lynxCanvas.ccall('scene_report','string',[],[])).images.filter(i=>i.loaded).length===13);

@@ -77,13 +77,8 @@ globalThis.createLynxBrowserImages = function(module, device) {
   async function load(r) {
     let bitmap;
     try {
-      const url=new URL(r.src, document.baseURI);
-      if(!['http:','https:','data:','blob:'].includes(url.protocol)) throw new Error('Unsupported image URL protocol');
-      const response=await fetch(url,{signal:r.abort.signal});
-      if(!response.ok) throw new Error(`Image HTTP ${response.status}`);
-      const blob=await response.blob();
-      if(blob.size>32*1024*1024) throw new Error('Encoded image exceeds 32 MiB');
-      const bytes=new Uint8Array(await blob.arrayBuffer());
+      const response=await module.lynxResources.load({url:r.src,type:'image',signal:r.abort.signal}).promise;
+      const bytes=response.data;
       if(!live(r)) return;
       const f=format(bytes); r.type=f.type; r.animated=f.animated;
       if(f.animated) {

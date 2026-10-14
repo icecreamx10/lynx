@@ -195,7 +195,7 @@ interfaces. Browser DOM and Canvas2D do not lay out or paint this text.
   page releases its paragraphs; font managers are shared on the main thread.
 - UTF-8 content, Chinese/Latin wrapping, explicit newlines, automatic height,
   fixed line height, center/right alignment, long-word wrapping, max-line
-  ellipsis and single-line clipping are supported. The bundled font set covers
+  ellipsis and single-line clipping are supported. The external font set covers
   Latin, Simplified Chinese, Arabic and monochrome emoji. HarfBuzz performs
   glyph shaping; fonts fall back by character rather than replacing text with
   browser-generated bitmaps.
@@ -224,12 +224,83 @@ dynamic text/width/color updates, moving following siblings, idle events and
 three reloads with a persistent BTS worker. Acceptance artifacts are written
 under `out/Wasm/validation-text` and `out/Wasm/validation-text-webkit`.
 
-This probe embeds the complete test font files and their OFL notices, which
-adds substantially to the single-file preview size. These font assets can be
-loaded separately in a deployed host. Loading arbitrary web fonts, inline
-images/views, inline truncation widgets/events, text gradients/shadows, selection and
-editing are not implemented by this text adapter. Font coverage is limited to
-the supplied assets; it does not access the browser's installed system fonts.
+All four test fonts are external `fonts/*.ttf` files, with OFL notices staged
+beside the HTML. No font data is embedded in the bundle host WASM. Roboto loads
+before native startup; Simplified Chinese, Arabic and Emoji load when the text
+contains the corresponding Unicode ranges or explicitly requests their known
+families. Optional fonts do not block first paint. Their arrival clears
+paragraph, family-match and shape caches and requests native layout, including
+following siblings and real layout events. Loaded faces remain shared across
+page reloads. Failed optional fonts remain observable, with explicit retry.
+Arbitrary font-family registration, inline images/views, inline truncation
+widgets/events, text gradients/shadows, selection and editing are not
+implemented. Font coverage is limited to the supplied assets; this does not
+access the browser's installed system fonts.
+
+## Web resource provider
+
+Images and fonts use the same `module.lynxResources` asynchronous provider.
+It resolves relative URLs against the preview document, supplies resource type,
+request ID, AbortSignal and size limit, and records bounded diagnostics (last
+128 completed requests plus current requests). The default implementation uses
+browser fetch, including browser HTTP caching and CORS rules, with a 30-second
+timeout and a 32 MiB encoded-resource limit, enforced while reading streams.
+Image decode/upload stays in the browser; font bytes enter WASM and are parsed
+by Skity/FreeType. Resource responses do not carry decoded pixels through WASM.
+No additional application byte cache or cross-node request deduplication is
+implemented. Bundle/lazy-bundle/external-JS loaders are not wired into this
+provider yet; this is not a full LynxResourceLoader implementation.
+
+A host may define these before creating the preview instance:
+
+```js
+// Optional: use the same request interface for file/DevTools/custom schemes.
+window.lynxResourceProvider = async ({url, type, signal, maxBytes, id}) => {
+  return fetch(url, {signal});
+};
+// Slots: 0 Latin, 1 Simplified Chinese, 2 Arabic, 3 Emoji.
+window.lynxFontResources = {1: '/assets/NotoSansSC.ttf'};
+```
+
+Providers return a Response, Blob, ArrayBuffer, Uint8Array, or
+`{data, mime, url}`. Browser CORS still applies to provider fetches. Custom
+providers must respect cancellation to release their own resources; the bridge
+rejects cancelled/timed-out requests and ignores late results even if they do
+not. Font page generations and image tokens reject obsolete callbacks. An
+accepted page replacement cancels pending optional font loads; the new page
+can request them again. A rejected bundle leaves the current page intact.
+
+Diagnostics and optional-font retry:
+
+```js
+lynxCanvas.lynxResources.inspect();
+lynxCanvas.lynxFonts.inspect();
+await lynxCanvas.lynxFonts.retry(1);
+```
+
+`verify-resource-provider.mjs` checks the provider contract, stream limits,
+cancellation, late completion and timeout. `verify-web-resources.mjs` checks
+real native font registration/reflow, ASCII-only demand, HTTP/corrupt-font
+failure and retry, reload cancellation and a shared custom provider for image
+and font consumers. Run the latter against a staged text site containing
+`interactive/` and `images/` variants built with the same current host:
+
+```bash
+bash platform/wasm/build-resources.sh
+python3 platform/wasm/serve.py --port 6121 --site out/Wasm/text-site
+node platform/wasm/verify-resource-provider.mjs
+node platform/wasm/verify-web-resources.mjs
+PROBE_URL=http://127.0.0.1:6121/images/ \
+  PROBE_IMAGE_BUNDLE=out/Wasm/images-resource.lynx.bundle node platform/wasm/verify-images.mjs
+PROBE_URL=http://127.0.0.1:6121/interactive/ \
+  PROBE_INITIAL_BUNDLE=out/Wasm/interactive-resource.lynx.bundle node platform/wasm/verify-interactive.mjs
+node platform/wasm/measure-resource-sizes.mjs
+```
+
+Set `PROBE_BROWSER=webkit` and separate `PROBE_OUTPUT` directories to run
+browser acceptance on WebKit as well. `measure-resource-sizes.mjs` validates
+the extracted WASM, checks that none of the four font file headers are embedded,
+and writes raw/gzip/Brotli sizes and hashes to `out/Wasm/resource-sizes.json`.
 
 ## Limits
 
@@ -237,7 +308,7 @@ This is an experimental canvas host, not complete Lynx platform support.
 The renderer supports `view`/`text`/`image`, solid colors, fixed viewport layout,
 TTText shaping/wrapping and nested styled text. Scrolling, general CSS
 transform/opacity/clipping, native modules,
-non-image network resources, keyboard/IME and accessibility remain unsupported.
+bundle/external-JS network loading, keyboard/IME and accessibility remain unsupported.
 The demonstrated animation moves nodes through layout updates, rather than
 claiming a complete native CSS animation backend.
 
@@ -260,8 +331,8 @@ bash platform/wasm/build-bundle.sh
 
 This compiles the JSX/CSS sample, builds Lynx Core JS from this checkout,
 builds the native WASM host and stages the candidate separately under
-`out/Wasm/bundle-site`. The HTML embeds its loader, WASM, bundle, core JS and
-font, so it makes no separate runtime asset requests.
+`out/Wasm/bundle-site`. The HTML embeds its loader, WASM, bundle and core JS;
+font assets are staged separately. Font files are fetched separately through the provider.
 
 ```bash
 python3 platform/wasm/serve.py --port 6093 --site out/Wasm/bundle-site
@@ -301,7 +372,8 @@ There is no public deployment or tunneling.
 - CSS-scaled pointer coordinates work, and dragging does not trigger tap.
 - Reload during animation cancels the old page and resets the new counter.
 - Invalid bundle input preserves a page whose counter still works afterward.
-- No uncaught JS, native-runtime or WebGPU errors; only one document request.
+- No uncaught JS, native-runtime or WebGPU errors; one document request and
+  the external fonts needed by the displayed page.
 
 Verified locally with macOS ARM64, Chrome 152 and Apple WebGPU/Metal.
 The five-second animation checkpoint delivered 300 native state updates and
@@ -317,9 +389,12 @@ performance benchmark.
   the version/checksum pinned by Emscripten 4.0.20.
 - Frontend: ReactLynx 0.123.1, Rspeedy 0.16.1, React plugin 0.18.1.
   Dependencies are pinned by `app/package-lock.json`.
-- Current text probe WASM including its full font assets: 36.28 MB, gzip
-  15.87 MB. Self-contained HTML: 43.90 MB, gzip 17.48 MB. Debug names are
-  retained and LTO is disabled;
+- Font files are external to the bundle WASM. Current text WASM: 15.20 MB
+  raw, 2.60 MB gzip, 2.16 MB Brotli. HTML: 16.73 MB raw, 2.82 MB gzip.
+  The full Chinese font is a separate 17.77 MB file, fetched on demand.
+  Compression sizes are measured; the LAN preview does not apply HTTP
+  content encoding. See `out/Wasm/resource-sizes.json` for exact bytes and
+  hashes. Debug names are retained and LTO is disabled;
   these are experiment sizes, not production-size measurements.
 - Browser-only adaptations use the opt-in `enable_wasm_static_canvas` flag.
   Native platform builds keep their existing implementations.

@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 #include "platform/wasm/browser_text.h"
 
+#include <emscripten.h>
 #include <textra/fontmgr_collection.h>
 #include <textra/layout_drawer.h>
 #include <textra/paragraph.h>
@@ -11,7 +12,9 @@
 #include <textra/text_layout.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <skity/io/data.hpp>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,22 +24,58 @@
 #include "core/renderer/dom/fiber/text_element.h"
 #include "core/renderer/starlight/layout/layout_object.h"
 
+EM_JS(void, RequestBrowserFont, (int slot),
+      { Module.lynxFonts.request(slot); });
+
 namespace lynx::wasm {
 namespace {
 namespace tt = ttoffice::tttext;
 namespace sl = starlight;
 using Face = std::shared_ptr<skity::textlayout::SkityTypefaceHelper>;
+// A candidate page may measure before validation. Only the accepted page is
+// allowed to start asynchronous font work against its resource generation.
+bool font_requests_enabled = false;
+struct FontRequestScope {
+  bool previous;
+  explicit FontRequestScope(bool enabled) : previous(font_requests_enabled) {
+    font_requests_enabled = enabled;
+  }
+  ~FontRequestScope() { font_requests_enabled = previous; }
+};
 class FontManager final : public tt::IFontManager {
  public:
-  FontManager() {
-    for (const char* path :
-         {"/font.ttf", "/cjk.ttf", "/arabic.ttf", "/emoji.ttf"}) {
-      auto face = skity::Typeface::MakeFromFile(path);
-      if (!face) std::abort();
-      fonts_.push_back(std::move(face));
-    }
+  bool Register(int slot, const uint8_t* bytes, size_t size) {
+    if (slot < 0 || slot >= 4 || !bytes || !size || size > 32 * 1024 * 1024)
+      return false;
+    if (fonts_[slot]) return true;
+    auto face =
+        skity::Typeface::MakeFromData(skity::Data::MakeWithCopy(bytes, size));
+    if (!face) return false;
+    fonts_[slot] = std::move(face);
+    instances_.clear();
+    return true;
   }
-  int countFamilies() const override { return fonts_.size(); }
+  int countFamilies() const override {
+    return std::count_if(fonts_.begin(), fonts_.end(),
+                         [](const auto& font) { return bool(font); });
+  }
+  void EnsureFamily(const char* name) const {
+    auto slot = Family(name);
+    if (font_requests_enabled && !fonts_[slot]) RequestBrowserFont(slot);
+  }
+  void Ensure(uint32_t cp) const {
+    int slot = -1;
+    if ((cp >= 0x2e80 && cp <= 0xa4cf) || (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xff00 && cp <= 0xffef) || (cp >= 0x20000 && cp <= 0x323af))
+      slot = 1;
+    else if ((cp >= 0x600 && cp <= 0x8ff) || (cp >= 0xfb50 && cp <= 0xfdff) ||
+             (cp >= 0xfe70 && cp <= 0xfeff))
+      slot = 2;
+    else if ((cp >= 0x1f000 && cp <= 0x1faff) || (cp >= 0x2600 && cp <= 0x27bf))
+      slot = 3;
+    if (font_requests_enabled && slot >= 0 && !fonts_[slot])
+      RequestBrowserFont(slot);
+  }
   bool Supports(uint32_t cp) const {
     if (cp < 0x20 || cp == 0x7f || (cp >= 0x200b && cp <= 0x200f) ||
         (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2060 && cp <= 0x206f) ||
@@ -44,7 +83,7 @@ class FontManager final : public tt::IFontManager {
         (cp >= 0xe0100 && cp <= 0xe01ef))
       return true;
     for (const auto& face : fonts_)
-      if (face->UnicharToGlyph(cp)) return true;
+      if (face && face->UnicharToGlyph(cp)) return true;
     return false;
   }
   TypefaceRef matchFamilyStyle(const char* family,
@@ -56,10 +95,11 @@ class FontManager final : public tt::IFontManager {
                                         const char**, int,
                                         uint32_t cp) override {
     auto first = Get(Family(family), style.GetWeight());
-    if (first->UnicharToGlyph(cp)) return first;
+    if (first && first->UnicharToGlyph(cp)) return first;
     for (size_t i = 0; i < fonts_.size(); ++i) {
+      if (!fonts_[i]) continue;
       auto face = Get(i, style.GetWeight());
-      if (face->UnicharToGlyph(cp)) return face;
+      if (face && face->UnicharToGlyph(cp)) return face;
     }
     return nullptr;
   }
@@ -82,6 +122,11 @@ class FontManager final : public tt::IFontManager {
     return 0;
   }
   Face Get(size_t index, int weight) const {
+    if (!fonts_[index]) {
+      if (font_requests_enabled) RequestBrowserFont(index);
+      index = 0;
+    }
+    if (!fonts_[index]) return nullptr;
     auto key = index * 1001 + std::clamp(weight, 100, 900);
     auto found = instances_.find(key);
     if (found != instances_.end()) return found->second;
@@ -95,7 +140,7 @@ class FontManager final : public tt::IFontManager {
     instances_[key] = wrapped;
     return wrapped;
   }
-  std::vector<std::shared_ptr<skity::Typeface>> fonts_;
+  std::array<std::shared_ptr<skity::Typeface>, 4> fonts_;
   mutable std::unordered_map<size_t, Face> instances_;
 };
 std::shared_ptr<FontManager> Fonts() {
@@ -288,16 +333,23 @@ class Canvas final : public tt::SkityCanvasHelper {
 };
 }  // namespace
 struct BrowserText::Impl {
+  bool active = false;
   tt::FontmgrCollection fonts{Fonts()};
   tt::TextLayout engine{&fonts, tt::kSelfRendering};
   std::unordered_map<int, Layout> layouts;
   Layout& Prepare(tasm::Element* node, float width, int wm, float height,
                   int hm) {
+    FontRequestScope requests(active);
     tt::Style base;
     base.SetTextSize(node->GetFontSize());
     base.SetForegroundColor(0xff000000);
     std::vector<Run> runs;
     Runs(node, base, runs);
+    for (const auto& run : runs) {
+      for (auto cp : Codepoints(run.text)) Fonts()->Ensure(cp);
+      for (const auto& family : run.style.GetFontDescriptor().font_family_list_)
+        Fonts()->EnsureFamily(family.c_str());
+    }
     auto key = Key(runs, node);
     auto& cache = layouts[node->impl_id()];
     if (cache.region && cache.key == key && cache.width == width &&
@@ -387,6 +439,15 @@ struct BrowserText::Impl {
 };
 BrowserText::BrowserText() : impl_(std::make_unique<Impl>()) {}
 BrowserText::~BrowserText() = default;
+void BrowserText::Activate() { impl_->active = true; }
+bool BrowserText::RegisterFont(int slot, const uint8_t* bytes, size_t size) {
+  return Fonts()->Register(slot, bytes, size);
+}
+void BrowserText::InvalidateFonts() {
+  impl_->layouts.clear();
+  impl_->fonts.clearCaches();
+  tt::TextLayout::ClearShapeCache();
+}
 tasm::LayoutResult BrowserText::Measure(tasm::Element* element, float width,
                                         int wm, float height, int hm) {
   auto& c = impl_->Prepare(element, width, wm, height, hm);
