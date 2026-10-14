@@ -529,7 +529,8 @@ PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/devtool/verify-native.mjs
 
 The pinned official Elements/Console/Sources frontend opens automatically.
 Wide screens show the Bundle preview and DevTool side by side; narrow screens
-stack them. Use **关闭 Lynx DevTool** to close it and the same button to reopen it. Frontend assets and compiler source maps are self-hosted alongside the
+stack them. Use **关闭 Lynx DevTool** to close it and the same button to reopen it.
+Frontend assets and compiler source maps are self-hosted alongside the
 preview. Inspector is disabled by default; the normal build does not link its
 backend or show the entry point. POSIX signal-based CPU sampling is unavailable
 in WASM; the engine uses its existing non-POSIX profiler implementation.
@@ -627,3 +628,21 @@ Inspector fixture, or set `TEXT_BUNDLE` to a compiled copy. The resource gate
 checks lazy startup, Chinese/Arabic/Emoji shaping, actual WebGPU glyph pixels,
 React text reflow, a custom Window provider, font reuse on reload, and narrow
 screen layout. The official MTS gate also checks default-open and wide layout.
+
+
+## Public static preview packaging
+
+After building and accepting both ordinary fixtures and the Inspector host:
+
+```bash
+python3 platform/wasm/stage-public.py --site out/public-site/dist
+```
+
+This packages the default-open Inspector page at `/`, plus `/text/`, `/images/`
+and `/interactive/`, with one shared external fonts directory and font licenses.
+Only staged public demo assets are copied. Serve the output on HTTPS with
+`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` on every response. The generated
+`_headers` declares these for compatible static hosts. Verify the host applies
+these headers: plain GitHub Pages does not provide custom response headers.
+Use a browser with WebGPU for the canvas and Chrome for the embedded frontend.
