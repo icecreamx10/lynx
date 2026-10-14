@@ -7,6 +7,103 @@ renderer is Skity/WebGPU. Canvas2D is used for animation patch composition in
 the compatibility decoder, and for pixel readback by verification scripts; it
 does not lay out or render the Lynx page.
 
+## Shared branch: clone, build and contribute
+
+The shared development branch is `codex/qjs-wasm-canvas` in
+[`icecreamx10/lynx`](https://github.com/icecreamx10/lynx). It contains the
+accepted WASM canvas host, BTS worker, TTText, browser image decoding,
+external fonts and Web Resource Provider. Inspector integration is being
+developed separately and will be merged after its owner completes it.
+Create feature branches from this branch and target it with pull requests.
+
+### First checkout
+
+Requirements: Git, Bash, Python **3.11.8+**, Node **22+**, CMake, Ninja,
+Emscripten **4.0.20**, and Python **PyYAML 6.0.3**. Internet access is needed
+for the public dependencies, npm packages and font assets.
+
+```bash
+# The WASM target does not need the native test fixtures stored in Git LFS.
+GIT_LFS_SKIP_SMUDGE=1 git clone --single-branch \
+  --branch codex/qjs-wasm-canvas https://github.com/icecreamx10/lynx.git lynx-wasm
+git clone https://github.com/emscripten-core/emsdk.git emsdk
+cd emsdk
+./emsdk install 4.0.20
+./emsdk activate 4.0.20
+source ./emsdk_env.sh
+export LYNX_WASM_EMSDK="$PWD"
+cd ../lynx-wasm
+python3 -m venv out/wasm-venv
+source out/wasm-venv/bin/activate
+python3 -m pip install PyYAML==6.0.3
+```
+
+Keep the Python/SDK environments active, then build all three sample variants:
+
+```bash
+bash platform/wasm/build-resources.sh
+python3 platform/wasm/serve.py --port 6121 --site out/Wasm/text-site
+```
+
+Open `http://127.0.0.1:6121/` for text, `/images/` for static/animated images,
+or `/interactive/` for input, React state and animation. Uploads must be
+LynxJS-compiled `.lynx.bundle` files, not JSX/TSX sources.
+
+The build fetches the public dependencies selected by `prepare.py`, verifies
+revisions, applies the committed WASM patches, generates Core JS, builds
+Skity/TTText and links the native host. No existing Lynxtron checkout or
+untracked dependency symlinks are required. Generated assets live under `out/`.
+Fonts are separate `fonts/*.ttf` assets, outside the bundle WASM. Latin loads
+at startup; Chinese/Arabic/Emoji load on demand. Chinese currently loads its
+full external font file, not a glyph subset.
+
+Build commands share `out/Wasm` and must run sequentially in a checkout.
+Use separate clones for concurrent native builds. A staged site remains
+independent when another fixture is compiled.
+
+### Reproduce acceptance
+
+Install the browser test tools separately from the fixture package:
+
+```bash
+npm install --prefix out/wasm-tests --no-save --package-lock=false playwright@1.62.1
+export PLAYWRIGHT_PATH="$PWD/out/wasm-tests/node_modules/playwright"
+out/wasm-tests/node_modules/.bin/playwright install chromium webkit
+# Optional: export CHROME_PATH="/absolute/path/to/chrome"
+```
+
+Leave the preview server running and execute from the checkout root:
+
+```bash
+node platform/wasm/verify-resource-provider.mjs
+PROBE_URL=http://127.0.0.1:6121/ node platform/wasm/verify-text.mjs
+PROBE_URL=http://127.0.0.1:6121/ node platform/wasm/verify-web-resources.mjs
+PROBE_URL=http://127.0.0.1:6121/images/ \
+  PROBE_IMAGE_BUNDLE=out/Wasm/images-resource.lynx.bundle node platform/wasm/verify-images.mjs
+PROBE_URL=http://127.0.0.1:6121/interactive/ \
+  PROBE_INITIAL_BUNDLE=out/Wasm/interactive-resource.lynx.bundle node platform/wasm/verify-interactive.mjs
+PROBE_URL=http://127.0.0.1:6121/images/ node platform/wasm/verify-bts-worker.mjs
+node platform/wasm/measure-resource-sizes.mjs
+```
+
+Repeat browser suites with `PROBE_BROWSER=webkit` and a separate
+`PROBE_OUTPUT=out/Wasm/validation-<suite>-webkit` directory. Image suites use
+port 6196 for local CORS fixtures and must run sequentially. JSON reports and
+screenshots are written under `out/Wasm/validation-*`.
+
+The recorded browser acceptance environment is macOS ARM64, Chrome 152,
+Playwright WebKit 26.5 and Apple WebGPU/Metal. Other build hosts and physical
+mobile browsers require their own acceptance; this is not native-platform
+regression coverage. Text selection/editing, full Clay component coverage,
+Inspector, and native lazy-bundle/external-JS resource loading are outside
+this shared baseline's accepted scope.
+
+Localhost HTTP works for WebGPU. For LAN access use HTTPS with the supplied
+server's `--bind`, `--cert` and `--key` arguments. Preserve COOP/COEP response
+headers for SharedArrayBuffer and pthreads. Serve the staged site, not the
+source checkout. The repository is public; do not commit private assets,
+credentials, local certificates or generated previews.
+
 ## Current capabilities
 
 The default sample provides three independently verified paths:

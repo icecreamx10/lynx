@@ -3,7 +3,12 @@
 // LICENSE file in the root directory of this source tree.
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
 const root=path.resolve(import.meta.dirname,'../..');
+// This generated TS module is gitignored and absent in a fresh checkout.
+// Generate it before bundling rather than relying on a prior native build.
+execFileSync('python3',[path.join(root,'tools/feature_count/generate_feature_count.py')],
+ {cwd:root,stdio:'inherit',env:{...process.env,PYTHONHASHSEED:'0'}});
 const require=createRequire(root+'/platform/wasm/app/package.json');
 const esbuild=require('esbuild');
 esbuild.buildSync({entryPoints:[root+'/js_libraries/lynx-core/src/index.build.ts'],outfile:root+'/out/lynx_core.js',bundle:true,format:'iife',target:'es2019',minify:true,legalComments:'none',
