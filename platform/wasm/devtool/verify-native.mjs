@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 import fs from 'node:fs/promises';
 const require=createRequire(import.meta.url);
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
-const out='out/Wasm/validation-devtool-native';
+const out=process.env.PROBE_OUT || 'out/Wasm/validation-devtool-native';
 await fs.mkdir(out,{recursive:true});
 const browser=await chromium.launch({headless:true,
  executablePath:process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -19,7 +19,7 @@ try {
  await page.waitForFunction(()=>window.probeResult || window.probeErrors?.length,null,{timeout:60000});
  assert.deepEqual(await page.evaluate(()=>probeErrors),[]);
  // Use the unmodified protocol agents through the browser transport.
- await page.evaluate(()=>{
+ await page.evaluate(async()=>{
   const module=lynxCanvas;
   window.cdpMessages=[];
   window.cdpPending=new Map();
@@ -30,12 +30,12 @@ try {
    const pending=cdpPending.get(message.id);
    if(pending){clearTimeout(pending.timer);cdpPending.delete(message.id);pending.resolve(message);}
   };
-  window.cdpView=module.ccall('devtool_attach','number',[],[]);
+  window.cdpView=await module.call('devtool_attach');
   window.cdpSend=(method,params={},sessionId)=>new Promise((resolve,reject)=>{
    const id=next++;
    const timer=setTimeout(()=>{cdpPending.delete(id);reject(Error('CDP timed out: '+method));},15000);
    cdpPending.set(id,{resolve,reject,timer});
-   module.ccall('devtool_dispatch',null,['number','string'],[
+   module.call('devtool_dispatch',[
     cdpView,JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})})]);
   });
  });
@@ -55,32 +55,19 @@ try {
  checks.inlineStyle=await ok('CSS.getInlineStylesForNode',{nodeId:counter.nodeId});
  checks.computedStyle=(await ok('CSS.getComputedStyleForNode',{nodeId:counter.nodeId})).computedStyle.length;
  const pixel=()=>page.evaluate(async id=>{
-  window.pauseLynxFramePump=true;
-  const m=lynxCanvas;
-  await probeDevice.queue.onSubmittedWorkDone();
-  m.ccall('release_completed_frames',null,[],[]);
-  const frame=m.ccall('render_frame','number',[],[]);
-  const r=JSON.parse(m.ccall('scene_report','string',[],[]));
+  const state=await lynxCanvas.call('state');
   const flatten=n=>[n,...n.children.flatMap(flatten)];
-  const node=flatten(r.tree).find(n=>n.node===id);
-  const copy=document.createElement('canvas');copy.width=800;copy.height=500;
-  const ctx=copy.getContext('2d');ctx.drawImage(document.querySelector('#canvas'),0,0);
-  const rgba=[...ctx.getImageData(node.x+node.width-10,node.y+node.height-10,1,1).data];
-  await probeDevice.queue.onSubmittedWorkDone();
-  m.ccall('release_frames',null,['number'],[frame]);
-  window.pauseLynxFramePump=false;
-  return rgba;
+  const node=flatten(state.report.tree).find(n=>n.node===id);
+  const snapshot=await lynxCanvas.call('snapshot',[[[node.x+node.width-10,node.y+node.height-10]]]);
+  return snapshot.pixels[0];
  },counter.nodeId);
  const before=await pixel();
  await ok('Overlay.highlightNode',{nodeId:counter.nodeId,highlightConfig:{contentColor:{r:255,g:0,b:0,a:1}}});
- await page.waitForFunction(()=>!lynxCanvas.ccall('needs_frame','number',[],[]));
  assert.notDeepEqual(await pixel(),before);checks.nativeHighlight=true;
  await ok('Overlay.hideHighlight');
- await page.waitForFunction(()=>!lynxCanvas.ccall('needs_frame','number',[],[]));
  assert.deepEqual(await pixel(),before);
  const inline=checks.inlineStyle.inlineStyle;
  await ok('CSS.setStyleTexts',{edits:[{styleSheetId:inline.styleSheetId,range:inline.range,text:'background-color: #23765b;'}]});
- await page.waitForFunction(()=>!lynxCanvas.ccall('needs_frame','number',[],[]));
  assert.deepEqual((await pixel()).slice(0,3),[35,118,91]);checks.cssPixels=true;
  await ok('Runtime.enable');
  await ok('Debugger.enable');
@@ -125,12 +112,12 @@ try {
     .then(r=>window.detachedResult=r).catch(()=>{});
  });
  await page.waitForFunction(()=>cdpMessages.some(m=>m.method==='Debugger.paused'));
- await page.evaluate(()=>lynxCanvas.ccall('devtool_detach',null,['number'],[cdpView]));
- await page.evaluate(()=>{cdpView=lynxCanvas.ccall('devtool_attach','number',[],[]);});
+ await page.evaluate(()=>lynxCanvas.call('devtool_detach',[cdpView]));
+ await page.evaluate(async()=>{cdpView=await lynxCanvas.call('devtool_attach');});
  const afterDetach=await ok('Runtime.evaluate',{expression:'__lynxInspectorIncrement(9)',returnByValue:true});
  assert.equal(afterDetach.result.value,10);
  checks.detachWhilePaused=true;
- await page.evaluate(()=>lynxCanvas.ccall('devtool_detach',null,['number'],[cdpView]));
+ await page.evaluate(()=>lynxCanvas.call('devtool_detach',[cdpView]));
  // The actual official frontend must populate its Elements view.
  const frameReady=page.waitForEvent('framenavigated',{predicate:f=>f.url().includes('/devtools/inspector.html')});
  await page.locator('#toggle-devtool').click();
@@ -160,7 +147,7 @@ try {
  await page.waitForFunction(()=>document.querySelector('#load-status').dataset.state==='success');
  const clickPoint=await page.evaluate(()=>{
   const flatten=n=>[n,...n.children.flatMap(flatten)];
-  const report=JSON.parse(lynxCanvas.ccall('scene_report','string',[],[]));
+  const report=window.probeResult;
   const label=flatten(report.tree).find(n=>n.text==='Count: 0');
   const rect=document.querySelector('#canvas').getBoundingClientRect();
   return {x:rect.x+1+(label.x+5)*rect.width/802,y:rect.y+1+(label.y+5)*rect.height/502};
@@ -168,7 +155,7 @@ try {
  await page.mouse.click(clickPoint.x,clickPoint.y);
  await page.waitForFunction(()=>{
   const flatten=n=>[n,...n.children.flatMap(flatten)];
-  const report=JSON.parse(lynxCanvas.ccall('scene_report','string',[],[]));
+  const report=window.probeResult;
   return flatten(report.tree).some(n=>n.text==='Count: 1');
  });
  checks.reloadAndClick=true;

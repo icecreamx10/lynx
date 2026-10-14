@@ -310,8 +310,27 @@ preview. Inspector is disabled by default; the normal build does not link its
 backend or show the entry point. POSIX signal-based CPU sampling is unavailable
 in WASM; the engine uses its existing non-POSIX profiler implementation.
 
-Browser threading: DOM/layout/render and MTS currently run on the browser main
-thread; BTS and CDP dispatch use separate persistent pthread workers. Inspector
+Browser threading defaults to a render pthread worker: MTS, TemplateAssembler,
+layout, Skity/WebGPU, image decoding, frame leases and the transferred
+OffscreenCanvas all belong to that worker. BTS and CDP dispatch each have their
+own persistent pthread worker. The Window owns the loader and official frontend;
+its asynchronous host requests cannot touch the native tree or GPU objects.
+CDP dispatch bypasses the render task queue, so the existing Inspector can receive
+resume/step/disable commands while MTS blocks in its native pause loop.
+
+Use the **MTS / 渲染宿主** selector or `?mts=main` to retain browser-main-thread
+execution. Switching modes reloads the instance because canvas transfer is
+one-way. Both modes use the same engine and asynchronous `lynxCanvas.call()` API.
+Main-thread mode supports rendering, interaction and BTS debugging; the embedded
+frontend reports that MTS pause/breakpoints require Worker mode. No custom pause
+loop, debugger statement interception or replacement CDP agent is used.
+
+The fixture build emits the compiler's existing `lepus_debug` data through its
+public `beforeEmit` hook. The browser resource provider feeds that data into the
+existing Inspector before loading the context. It applies only to the exact
+built-in bundle bytes; uploading an unrelated bundle never reuses its function
+IDs. Native platform hosts retain their existing platform-facade resource path.
+ Inspector
 callbacks to a retired page are discarded before touching its assembler. Each
 iframe connection has a distinct generation, and the bridge allocates unique
 wire request ids to discard late responses after reconnecting.
@@ -329,10 +348,36 @@ Validated against the real DevTool backend:
   a working counter. Reports and screenshots are under
   `out/Wasm/validation-devtool-{port,native}`.
 
-Remaining acceptance: MTS pause/step requires moving its host execution off the
-browser UI thread. Blocking the existing native pause loop on that thread would
-also block iframe events. MTS breakpoints are **not accepted as supported** by
-this prototype. Native host geometry/picking integration and uploaded bundles'
-associated debug resources also need their own acceptance. The current source
-maps belong to the built-in fixture. This is not a claim that phases 2–4 are all
-complete, nor a cross-platform regression result.
+`devtool/verify-render-worker.mjs` additionally verifies native MTS source-line
+breakpoints, local variables, step-over, step-into on a compiled MTS tap handler,
+resume and detach while paused. During pause, the Window heartbeat and BTS keep
+running while render requests remain queued. Rendering acceptance covers MTS
+pixel changes, a React counter, continuous animation, idle suspension, bundle
+replacement, static/animated image decoding and switching back to main mode.
+Results are in `out/Wasm/validation-render-threading/validation.json`.
+`devtool/verify-official-mts.mjs` also checks the actual frontend's Step Over and
+Resume buttons, mapped TSX, and closing the iframe while MTS is paused. Its report
+and screenshot are in `out/Wasm/validation-official-mts`.
+
+Prepare its two upload fixtures using the existing app (preserve copies before
+rebuilding the built-in DevTool fixture):
+
+```bash
+# Run from the repository root.
+(cd platform/wasm/app && LYNX_CANVAS_INTERACTIVE=1 npm run build)
+cp platform/wasm/app/dist/main.lynx.bundle out/Wasm/interactive.lynx.bundle
+(cd platform/wasm/app && LYNX_CANVAS_IMAGES=1 npm run build)
+cp platform/wasm/app/dist/main.lynx.bundle out/Wasm/images.lynx.bundle
+(cd platform/wasm/app && LYNX_CANVAS_DEVTOOL=1 npm run build -- --mode development)
+# Rebuild/stage the Inspector host as above, then:
+PLAYWRIGHT_PATH=/path/to/playwright PROBE_URL=http://127.0.0.1:6140/ \
+  node platform/wasm/devtool/verify-render-worker.mjs
+```
+
+`INTERACTIVE_BUNDLE`, `IMAGES_BUNDLE` and `PROBE_OUT` can override fixture/report
+paths. The older raw-`ccall` render harnesses target the earlier synchronous host;
+the thread-aware acceptance above uses the shared asynchronous host interface.
+Native geometry/picking, debug sidecar uploads for arbitrary bundles, and other
+platform/browser regressions remain separate work. Source maps and compiler
+MTS metadata packaged here belong to the built-in fixture. This is a Chrome /
+macOS WebGPU acceptance result, not a cross-platform performance claim.
