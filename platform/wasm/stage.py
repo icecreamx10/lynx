@@ -38,4 +38,7 @@ temporary = site / "index.html.new"
 temporary.write_text(html)
 temporary.replace(site / "index.html")
 shutil.copy2(root / "out/Roboto-OFL.txt", site / "Roboto-OFL.txt")
+if args.target == 'bundle_canvas':
+    for font in ['NotoSansSC.ttf', 'NotoSansArabic.ttf', 'NotoEmoji.ttf']:
+        shutil.copy2(root / 'out' / (font + '.OFL.txt'), site / (font + '.OFL.txt'))
 print(f"Staged self-contained HTML: {len(html.encode())} bytes")

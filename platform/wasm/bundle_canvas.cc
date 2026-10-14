@@ -12,10 +12,7 @@
 #include <deque>
 #include <fstream>
 #include <memory>
-#include <numeric>
 #include <skity/gpu/gpu_context_web.hpp>
-#include <skity/text/font.hpp>
-#include <skity/text/typeface.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -64,7 +61,7 @@ struct Pointer {
   bool moved = false;
 };
 std::unordered_map<int, Pointer> pointers;
-std::shared_ptr<skity::Typeface> font;
+lynx::wasm::BrowserText* text_host = nullptr;
 WGPUDevice device = nullptr;
 WGPUQueue queue = nullptr;
 WGPUSurface surface = nullptr;
@@ -106,18 +103,8 @@ void PaintNode(skity::Canvas* canvas, tasm::Element& node, float parent_x,
     images->Paint(canvas, static_cast<tasm::ImageElement&>(node), x, y,
                   bounds.size_.width_, bounds.size_.height_);
   }
-  if (node.is_text()) {
-    const std::string text = TextContent(&node);
-    auto color = style->ExtractCanonicalComputedValue(tasm::kPropertyIDColor);
-    paint.SetColor(color && color->kind() ==
-                                sl::CanonicalComputedValue::Kind::kColor
-                       ? std::get<uint32_t>(color->storage())
-                       : 0xff000000);
-    paint.SetTypeface(font);
-    paint.SetTextSize(node.GetFontSize());
-    skity::FontMetrics metrics{};
-    skity::Font(font, node.GetFontSize()).GetMetrics(&metrics);
-    canvas->DrawSimpleText(text.c_str(), x, y - metrics.ascent_, paint);
+  if (node.is_text() && text_host) {
+    text_host->Paint(canvas, &node, x, y);
   }
   for (auto* child = node.first_render_child(); child;
        child = child->next_render_sibling())
@@ -134,17 +121,9 @@ int CountNodes(tasm::Element* node) {
 bool ValidateStaticTree(tasm::Element* node, std::string& error) {
   const auto tag = node->GetTag().str();
   if (tag != "page" && tag != "view" && tag != "text" && tag != "raw-text" &&
-      tag != "image" && tag != "wrapper") {
+      tag != "image" && tag != "wrapper" && tag != "inline-text") {
     error = "This static canvas host does not support element: " + tag;
     return false;
-  }
-  if (node->is_text()) {
-    for (unsigned char c : TextContent(node)) {
-      if (c >= 128 || c == '\n') {
-        error = "This prototype currently supports single-line ASCII text only";
-        return false;
-      }
-    }
   }
   for (auto* child = node->first_child(); child; child = child->next_sibling())
     if (!ValidateStaticTree(child, error)) return false;
@@ -165,10 +144,12 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
       tasm::EMBEDDED_MODE_BASE | tasm::LAYOUT_IN_ELEMENT));
   options.SetLongTaskMonitorDisabled(true);
   options.SetHasLogicExecutor(true);
+  auto painting =
+      std::make_unique<tasm::CanvasPaintingContext>(candidate_delegate->errors);
+  auto* candidate_text = &painting->texts;
   auto elements = std::make_unique<tasm::ElementManager>(
-      std::make_unique<tasm::CanvasPaintingContext>(candidate_delegate->errors),
-      candidate_delegate.get(), tasm::LynxEnvConfig(800, 500, 1.f, 1.f),
-      options);
+      std::move(painting), candidate_delegate.get(),
+      tasm::LynxEnvConfig(800, 500, 1.f, 1.f), options);
   auto* candidate_manager = elements.get();
   elements->SetPropBundleCreator(
       std::make_shared<tasm::CanvasPropBundleCreator>());
@@ -212,6 +193,7 @@ bool LoadBundle(std::vector<uint8_t> bytes) {
   delegate = std::move(candidate_delegate);
   assembler = std::move(candidate);
   manager = candidate_manager;
+  text_host = candidate_text;
   root = candidate_root;
   bundle_bytes = size;
   node_count = count;
@@ -238,26 +220,7 @@ bool LoadScene() {
 lynx::tasm::LayoutResult lynx::tasm::CanvasPaintingContext::MeasureText(
     Element* element, float width, int width_mode, float height,
     int height_mode) {
-  std::string text = TextContent(element);
-  std::vector<skity::GlyphID> glyphs;
-  for (unsigned char c : text) {
-    if (c >= 128 || c == '\n') {
-      errors_.push_back(
-          "Only single-line ASCII text is supported by the canvas prototype");
-      return {};
-    }
-    glyphs.push_back(font->UnicharToGlyph(c));
-  }
-  skity::Font text_font(font, element->GetFontSize());
-  std::vector<float> widths(glyphs.size());
-  text_font.GetWidths(glyphs.data(), glyphs.size(), widths.data());
-  skity::FontMetrics metrics{};
-  text_font.GetMetrics(&metrics);
-  float measured_width = std::accumulate(widths.begin(), widths.end(), 0.f);
-  float measured_height = metrics.descent_ - metrics.ascent_;
-  return {width_mode == SLMeasureModeDefinite ? width : measured_width,
-          height_mode == SLMeasureModeDefinite ? height : measured_height,
-          -metrics.ascent_};
+  return texts.Measure(element, width, width_mode, height, height_mode);
 }
 
 namespace {
@@ -269,11 +232,14 @@ void ReportElements(rapidjson::Writer<rapidjson::StringBuffer>& writer,
   writer.Int(node->impl_id());
   writer.Key("tag");
   writer.String(node->GetTag().c_str());
+  writer.Key("id");
+  writer.String(node->GetIdSelector().c_str());
   if (node->is_text()) {
     writer.Key("text");
     writer.String(TextContent(node).c_str());
     writer.Key("fontSize");
     writer.Double(node->GetFontSize());
+    if (text_host) text_host->Report(node, writer);
   }
   if (node->slnode()) {
     const auto& bounds = node->slnode()->GetLayoutResult();
@@ -559,8 +525,6 @@ int main() {
   // Per-update INFO logs overwhelm the browser console during long animations.
   // Keep warnings/errors and the explicit structured host diagnostics.
   lynx::base::logging::SetMinLogLevel(LYNX_LOG_LEVEL_WARNING);
-  font = skity::Typeface::MakeFromFile("/font.ttf");
-  if (!font) return 3;
   if (!LoadScene()) return 1;
   device = emscripten_webgpu_get_device();
   if (!device) return 2;

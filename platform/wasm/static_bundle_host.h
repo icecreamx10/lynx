@@ -17,6 +17,7 @@
 #include "core/value_wrapper/value_impl_lepus.h"
 #include "platform/wasm/browser_bts_worker.h"
 #include "platform/wasm/browser_runtime.h"
+#include "platform/wasm/browser_text.h"
 namespace lynx::tasm {
 // Main-thread canvas host. BTS executes through a dedicated worker actor.
 class StaticBundleDelegate : public TemplateAssembler::Delegate,
@@ -249,19 +250,14 @@ class StaticBundleDelegate : public TemplateAssembler::Delegate,
 };
 class CanvasPaintingContext : public PaintingContextPlatformImpl {
  public:
-  explicit CanvasPaintingContext(std::vector<std::string>& errors)
-      : errors_(errors) {}
+  explicit CanvasPaintingContext(std::vector<std::string>&) {}
   bool HasEnableUIOperationBatching() override { return true; }
   LayoutResult MeasureText(Element* element, float width, int width_mode,
                            float height, int height_mode) override;
-  // This prototype uses a single-line text adapter, with no separate shaping
-  // or alignment pass. ElementManager still owns CSS and Starlight layout.
   void DispatchLayoutBefore(Element*) override {}
-  void AlignText(Element*) override {}
-  void DestroyText(Element*) override {}
-
- private:
-  std::vector<std::string>& errors_;
+  void AlignText(Element* element) override { texts.Align(element); }
+  void DestroyText(Element* element) override { texts.Erase(element); }
+  lynx::wasm::BrowserText texts;
 };
 class CanvasPropBundleCreator : public PropBundleCreator {
  public:

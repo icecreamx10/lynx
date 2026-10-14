@@ -66,6 +66,10 @@ executable("bundle_canvas") {
     "app/dist/main.lynx.bundle",
     "//out/lynx_core.js",
     "//out/Roboto-Regular.ttf",
+    "//out/NotoSansSC.ttf",
+    "//out/NotoSansArabic.ttf",
+    "//out/NotoEmoji.ttf",
+    "//out/textra-wasm/liblynx_browser_tttext.a",
   ]
   sources = [
     "../../core/renderer/utils/lynx_trail_hub_impl_default.cc",
@@ -75,6 +79,7 @@ executable("bundle_canvas") {
     "browser_images.cc",
     "browser_message_loop.cc",
     "browser_platform.cc",
+    "browser_text.cc",
     "bundle_canvas.cc",
   ]
   include_dirs = [
@@ -83,6 +88,7 @@ executable("bundle_canvas") {
     "../../third_party/quickjs/src/src",
     "../../third_party/rapidjson",
     "../../out/skity-source/include",
+    "../../out/textra-source/public",
     "../../out/skity-source/third_party/glm",
   ]
   defines = [ "NAPI_EXTERN=" ]
@@ -98,6 +104,8 @@ executable("bundle_canvas") {
   cflags = [ "--use-port=emdawnwebgpu" ]
   ldflags = [
     "--use-port=emdawnwebgpu",
+    "-sUSE_HARFBUZZ=1",
+    "-sINITIAL_MEMORY=67108864",
     "-sFILESYSTEM=1",
     "-sALLOW_MEMORY_GROWTH=1",
     "-sSTACK_SIZE=2097152",
@@ -115,10 +123,17 @@ executable("bundle_canvas") {
     rebase_path("//out/lynx_core.js", root_build_dir) + "@/lynx_core.js",
     "--embed-file",
     rebase_path("//out/Roboto-Regular.ttf", root_build_dir) + "@/font.ttf",
+    "--embed-file",
+    rebase_path("//out/NotoSansSC.ttf", root_build_dir) + "@/cjk.ttf",
+    "--embed-file",
+    rebase_path("//out/NotoSansArabic.ttf", root_build_dir) + "@/arabic.ttf",
+    "--embed-file",
+    rebase_path("//out/NotoEmoji.ttf", root_build_dir) + "@/emoji.ttf",
   ]
   libs = [
     "c++",
     "//out/skity-wasm/libskity.a",
+    "//out/textra-wasm/liblynx_browser_tttext.a",
     "//out/skity-wasm/module/wgx/libwgsl-cross.a",
     "//out/skity-wasm/third_party/pugixml/libpugixml.a",
     "//out/skity-wasm/third_party/jsoncpp/src/lib_json/libjsoncpp.a",

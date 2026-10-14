@@ -116,6 +116,10 @@ def main():
         key = f"third_party/{name}"
         declared_dependency(skity, key, graphics[key])
 
+    textra_revision = runpy.run_path(str(ROOT / "dependencies/revision.py"))["TEXTRA"]
+    git_dependency(ROOT / "out/textra-source",
+                   "https://github.com/lynx-family/lynx-textra.git", textra_revision)
+
     font = ROOT / "out/Roboto-Regular.ttf"
     if not font.exists():
         urllib.request.urlretrieve(
@@ -124,6 +128,24 @@ def main():
     if not license_path.exists():
         urllib.request.urlretrieve(
             "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/OFL.txt", license_path)
+    for family, filename, output, checksum in [
+        ("notosanssc", "NotoSansSC%5Bwght%5D.ttf", "NotoSansSC.ttf",
+         "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da"),
+        ("notoemoji", "NotoEmoji%5Bwght%5D.ttf", "NotoEmoji.ttf",
+         "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551"),
+        ("notosansarabic", "NotoSansArabic%5Bwdth,wght%5D.ttf", "NotoSansArabic.ttf",
+         "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e"),
+    ]:
+        font_path = ROOT / "out" / output
+        if not font_path.exists():
+            urllib.request.urlretrieve(
+                f"https://raw.githubusercontent.com/google/fonts/main/ofl/{family}/{filename}", font_path)
+        if hashlib.sha256(font_path.read_bytes()).hexdigest() != checksum:
+            raise RuntimeError(f"Unexpected font checksum: {font_path}")
+        license_path = ROOT / "out" / (output + ".OFL.txt")
+        if not license_path.exists():
+            urllib.request.urlretrieve(
+                f"https://raw.githubusercontent.com/google/fonts/main/ofl/{family}/OFL.txt", license_path)
     print("Canvas probe dependencies ready.")
 
 

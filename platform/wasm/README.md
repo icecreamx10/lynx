@@ -183,12 +183,60 @@ rAF animation, reload and bounded GPU queue all passed. Acceptance uses
 macOS ARM64, Chrome 152, WebKit 26.5 and Apple WebGPU/Metal. Physical iPhone
 and other browser/device combinations remain to be validated.
 
+## TTText paragraphs
+
+The bundle host now measures and paints text with the pinned public TTText
+engine (`dependencies/revision.py:TEXTRA`), its HarfBuzz shaper and substitute
+bidi implementation. The browser adapter uses TTText's Skity canvas/typeface
+interfaces. Browser DOM and Canvas2D do not lay out or paint this text.
+
+- A page owns its paragraph/layout cache. The same final-width LayoutRegion
+  supplies line positions and Skity glyph drawing. Destroying/reloading the
+  page releases its paragraphs; font managers are shared on the main thread.
+- UTF-8 content, Chinese/Latin wrapping, explicit newlines, automatic height,
+  fixed line height, center/right alignment, long-word wrapping, max-line
+  ellipsis and single-line clipping are supported. The bundled font set covers
+  Latin, Simplified Chinese, Arabic and monochrome emoji. HarfBuzz performs
+  glyph shaping; fonts fall back by character rather than replacing text with
+  browser-generated bitmaps.
+- Nested text runs preserve parent styles and apply their own CSS color,
+  size, weight, italic and decoration. The host maps Lynx's unspecified
+  spacing markers to TTText defaults instead of adding negative spacing.
+- Text/width/style updates rebuild the affected paragraph and update sibling
+  layout. `bindlayout` uses real Lynx events and UTF-16 line offsets, including
+  supplementary characters. Painting does not generate new layout events.
+- `scene_report` exposes element IDs, line geometry, run styles, submitted
+  glyph counts, missing glyphs and contextual glyph substitutions for local
+  acceptance/debugging. This is the experimental browser text adapter; Clay's
+  component tree and platform TextLayoutAPI are not yet connected.
+
+```bash
+bash platform/wasm/build-text.sh
+python3 platform/wasm/serve.py --port 6121 --site out/Wasm/text-site
+PROBE_URL=http://127.0.0.1:6121/ node platform/wasm/verify-text.mjs
+PROBE_BROWSER=webkit PROBE_OUTPUT=out/Wasm/validation-text-webkit node platform/wasm/verify-text.mjs
+```
+
+The verifier uses a real ReactLynx bundle and checks line measurements against
+the native node layout, actual Chinese/rich-text WebGPU pixels, contextual
+Arabic glyph substitutions, CJK/emoji font fallback, UTF-16 event offsets,
+dynamic text/width/color updates, moving following siblings, idle events and
+three reloads with a persistent BTS worker. Acceptance artifacts are written
+under `out/Wasm/validation-text` and `out/Wasm/validation-text-webkit`.
+
+This probe embeds the complete test font files and their OFL notices, which
+adds substantially to the single-file preview size. These font assets can be
+loaded separately in a deployed host. Loading arbitrary web fonts, inline
+images/views, inline truncation widgets/events, text gradients/shadows, selection and
+editing are not implemented by this text adapter. Font coverage is limited to
+the supplied assets; it does not access the browser's installed system fonts.
+
 ## Limits
 
 This is an experimental canvas host, not complete Lynx platform support.
-The renderer supports `view`/`text`/`image`, solid colors, fixed viewport layout and
-single-line ASCII text with Skity font metrics. Full text shaping, wrapping,
-rich text, scrolling, CSS transform/opacity/clipping, native modules,
+The renderer supports `view`/`text`/`image`, solid colors, fixed viewport layout,
+TTText shaping/wrapping and nested styled text. Scrolling, general CSS
+transform/opacity/clipping, native modules,
 non-image network resources, keyboard/IME and accessibility remain unsupported.
 The demonstrated animation moves nodes through layout updates, rather than
 claiming a complete native CSS animation backend.
@@ -265,10 +313,13 @@ performance benchmark.
 - Lynx public base: `377c684b893d8c99033ad42d7e7198112592f389`.
 - PrimJS: `f78a8bb4d727bc80d9a142df0de25fe72bb168c1`.
 - Skity: `d68693d19457fed75ceb8584a66417361e9cc00c`.
+- TTText/Textra: `14a7c148b59fc44505a9e871c6f90eeeed065054`. HarfBuzz uses
+  the version/checksum pinned by Emscripten 4.0.20.
 - Frontend: ReactLynx 0.123.1, Rspeedy 0.16.1, React plugin 0.18.1.
   Dependencies are pinned by `app/package-lock.json`.
-- Current diagnostic WASM: 14.34 MB, gzip 2.53 MB. Self-contained HTML:
-  15.83 MB, gzip 2.75 MB. Debug names are retained and LTO is disabled;
+- Current text probe WASM including its full font assets: 36.28 MB, gzip
+  15.87 MB. Self-contained HTML: 43.90 MB, gzip 17.48 MB. Debug names are
+  retained and LTO is disabled;
   these are experiment sizes, not production-size measurements.
 - Browser-only adaptations use the opt-in `enable_wasm_static_canvas` flag.
   Native platform builds keep their existing implementations.
