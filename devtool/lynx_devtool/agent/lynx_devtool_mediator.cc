@@ -51,20 +51,40 @@ void RunCallbackOnTasmThread(
 
 }  // namespace
 
-LynxDevToolMediator::LynxDevToolMediator() { view_id_ = GenerateViewId(); }
+LynxDevToolMediator::LynxDevToolMediator()
+    : LynxDevToolMediator(nullptr, nullptr) {}
+
+LynxDevToolMediator::LynxDevToolMediator(
+    fml::RefPtr<fml::TaskRunner> devtool_runner,
+    fml::RefPtr<fml::TaskRunner> event_runner)
+    : LynxDevToolMediatorBase(devtool_runner, event_runner) {
+  view_id_ = GenerateViewId();
+}
 
 void LynxDevToolMediator::Init(
     lynx::shell::LynxShell* shell,
     const std::shared_ptr<LynxDevToolNG>& lynx_devtool_ng) {
+  auto* runners = shell->GetRunners();
+  Init(
+      {shell->GetTasm(), runners->GetTASMTaskRunner(),
+       runners->GetJSTaskRunner(), runners->GetUITaskRunner(),
+       !shell->IsRuntimeEnabled() || shell->GetPageOptions().HasLogicExecutor(),
+       reinterpret_cast<int64_t>(shell), shell},
+      lynx_devtool_ng);
+}
+
+std::shared_ptr<runtime::js::InspectorRuntimeObserverNG>
+LynxDevToolMediator::Init(
+    const Host& host, const std::shared_ptr<LynxDevToolNG>& lynx_devtool_ng) {
+  auto* shell = host.shell;
   devtool_wp_ = lynx_devtool_ng;
   if (ui_executor_) {
     ui_executor_->ResetInputHandler();
   }
 
-  auto* runners = shell->GetRunners();
-  tasm::TemplateAssembler* tasm = shell->GetTasm();
-  tasm_task_runner_ = runners->GetTASMTaskRunner();
-  js_task_runner_ = runners->GetJSTaskRunner();
+  auto* tasm = host.tasm;
+  tasm_task_runner_ = host.tasm_runner;
+  js_task_runner_ = host.js_runner;
 
   // Capture the platform ref during initialization rather than accessing the
   // TASM-owned painting context from subsequent UI-thread queries.
@@ -76,7 +96,7 @@ void LynxDevToolMediator::Init(
   painting_context_ref_ =
       painting_context ? painting_context->GetPlatformRef() : nullptr;
 
-  ui_task_runner_ = runners->GetUITaskRunner();
+  ui_task_runner_ = host.ui_runner;
 
   // Preserve domain enabled states across reloads.
   bool white_board_enabled = false;
@@ -111,25 +131,31 @@ void LynxDevToolMediator::Init(
   if (lepus_debugger_ == nullptr) {
     lepus_debugger_ =
         std::make_shared<InspectorLepusDebuggerImpl>(shared_from_this());
-    int64_t record_id = reinterpret_cast<int64_t>(shell);
-    lepus_debugger_->SetRecordID(record_id);
+    lepus_debugger_->SetRecordID(host.record_id);
   }
   if (native_module_record_manager_ == nullptr) {
     native_module_record_manager_ =
         std::make_shared<NativeModuleRecordManager>(shared_from_this());
   }
 
-  // shell set element observer in tasm thread;
-  shell->SetInspectorElementObserver(
-      std::make_shared<InspectorElementObserverImpl>(element_executor_));
-  // Install the Animation CDP observer on the TASM thread.
-  shell->SetInspectorAnimationObserver(
-      std::make_shared<InspectorAnimationObserverImpl>(element_executor_));
-  shell->SetHierarchyObserver(
-      std::make_shared<lynx::devtool::HierarchyObserverImpl>(ui_executor_));
+  auto element_observer =
+      std::make_shared<InspectorElementObserverImpl>(element_executor_);
+  auto animation_observer =
+      std::make_shared<InspectorAnimationObserverImpl>(element_executor_);
   auto runtime_observer = js_debugger_->GetInspectorRuntimeObserver();
   runtime_observer->SetDevToolMediator(shared_from_this());
-  shell->SetInspectorRuntimeObserver(runtime_observer);
+  if (shell) {
+    shell->SetInspectorElementObserver(element_observer);
+    shell->SetInspectorAnimationObserver(animation_observer);
+    shell->SetHierarchyObserver(
+        std::make_shared<HierarchyObserverImpl>(ui_executor_));
+    shell->SetInspectorRuntimeObserver(runtime_observer);
+  } else {
+    // Direct hosts initialize on the TASM thread before loading the bundle.
+    auto* elements = tasm->page_proxy()->element_manager().get();
+    elements->SetInspectorElementObserver(element_observer);
+    elements->SetInspectorAnimationObserver(animation_observer);
+  }
   auto lepus_observer = lepus_debugger_->GetInspectorLepusObserver();
   // A logic executor skips per-view BTS runtime creation, so the runtime flag
   // should ideally be false. Keep it unchanged for now: hosts also use
@@ -139,8 +165,7 @@ void LynxDevToolMediator::Init(
   // those runtime semantics.
   // TODO: Make the runtime flag reflect per-view runtime availability after
   // decoupling global-event delivery and auditing the remaining consumers.
-  lepus_observer->SetConsolePostNeeded(
-      !shell->IsRuntimeEnabled() || shell->GetPageOptions().HasLogicExecutor());
+  lepus_observer->SetConsolePostNeeded(host.forward_lepus_console);
   lepus_observer->SetDevToolMediator(shared_from_this());
   tasm->SetLepusObserver(lepus_observer);
   auto common_observer =
@@ -165,6 +190,7 @@ void LynxDevToolMediator::Init(
   }
 
   fully_initialized_ = true;
+  return runtime_observer;
 }
 
 void LynxDevToolMediator::SetDevToolPlatformFacade(

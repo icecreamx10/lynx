@@ -19,6 +19,7 @@ class LynxDevToolNG : public lynx::devtool::AbstractDevTool,
                       public std::enable_shared_from_this<LynxDevToolNG> {
  public:
   explicit LynxDevToolNG(bool debuggable);
+  LynxDevToolNG(bool debuggable, std::shared_ptr<LynxDevToolMediator> mediator);
   ~LynxDevToolNG() override;
 
   int32_t Attach(const std::string& url) override;

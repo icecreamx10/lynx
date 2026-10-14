@@ -61,7 +61,11 @@ static constexpr char kTypeGetFetchDebugInfo[] = "GetFetchDebugInfo";
 static constexpr char kTypeSetFetchDebugInfo[] = "SetFetchDebugInfo";
 
 LynxDevToolNG::LynxDevToolNG(bool debuggable)
-    : devtool_mediator_(std::make_shared<LynxDevToolMediator>()) {
+    : LynxDevToolNG(debuggable, std::make_shared<LynxDevToolMediator>()) {}
+
+LynxDevToolNG::LynxDevToolNG(bool debuggable,
+                             std::shared_ptr<LynxDevToolMediator> mediator)
+    : devtool_mediator_(std::move(mediator)) {
   static std::once_flag flag;
   std::call_once(flag, [] {
     auto& global_dispatcher =
