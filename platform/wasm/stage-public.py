@@ -19,6 +19,16 @@ for name in ['fonts', 'devtools', '.rspeedy']:
     source = devtool / name
     if source.is_dir():
         shutil.copytree(source, site / name, dirs_exist_ok=True)
+# Some static hosts exclude dot directories from their asset manifest.
+if (devtool / '.rspeedy').is_dir():
+    shutil.copytree(devtool / '.rspeedy', site / 'source-maps', dirs_exist_ok=True)
+host = site / 'devtools/host.js'
+transport = host.read_text()
+old = 'message.params.sourceMapURL, location.origin'
+new = "message.params.sourceMapURL.replace(/^\\/\\.rspeedy\\//, '/source-maps/'), location.origin"
+if transport.count(old) != 1:
+    raise RuntimeError('Unexpected DevTool source-map URL bridge')
+host.write_text(transport.replace(old, new))
 for source in devtool.glob('*OFL*'):
     if source.is_file():
         shutil.copy2(source, site / source.name)

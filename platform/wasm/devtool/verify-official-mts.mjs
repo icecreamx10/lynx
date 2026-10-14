@@ -12,6 +12,8 @@ const browser=await chromium.launch({headless:true,
  args:['--enable-unsafe-webgpu']});
 const page=await browser.newPage({viewport:{width:1500,height:1700}}),errors=[],checks={};
 page.on('pageerror',error=>errors.push(String(error)));
+const network=[];page.on('response',r=>{if(r.url().includes('.map'))network.push({url:r.url(),status:r.status()});});
+page.on('requestfailed',r=>network.push({url:r.url(),failure:r.failure()?.errorText}));
 try {
  await page.goto(process.env.PROBE_URL || 'http://127.0.0.1:6144/');
  await page.waitForFunction(()=>window.probeResult?.backgroundRuntime,null,{timeout:60000});
@@ -68,5 +70,5 @@ try {
  console.log(JSON.stringify({passed:true,checks}));
 } catch(error) {
  await page.screenshot({path:out+'/failure.png',fullPage:true}).catch(()=>{});
- await fs.writeFile(out+'/validation.json',JSON.stringify({passed:false,error:String(error),checks,errors},null,2));throw error;
+ await fs.writeFile(out+'/validation.json',JSON.stringify({passed:false,error:String(error),checks,errors,network},null,2));throw error;
 } finally {await browser.close();}

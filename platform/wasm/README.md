@@ -652,3 +652,6 @@ or user bundles. Servers that supply isolation headers skip registration.
 This fallback requires a top-level HTTPS/localhost page and Service Worker
 support; verify `crossOriginIsolated` on the deployed page.
 Use a browser with WebGPU for the canvas and Chrome for the embedded frontend.
+
+Static packaging copies compiler maps to `/source-maps/` and rewrites their
+frontend URLs, because some hosts exclude `.rspeedy` dot directories.
