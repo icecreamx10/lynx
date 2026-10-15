@@ -13,13 +13,9 @@ window.lynxIsolationReady = (async () => {
   }
   await navigator.serviceWorker.register('/isolation-worker.js', {scope:'/'});
   await navigator.serviceWorker.ready;
-  if (!navigator.serviceWorker.controller) await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(Error('Isolation worker activation timed out')); }, 10000);
-    function cleanup() { clearTimeout(timer); navigator.serviceWorker.removeEventListener('controllerchange', ready); }
-    function ready() { if (navigator.serviceWorker.controller) { cleanup(); resolve(); } }
-    navigator.serviceWorker.addEventListener('controllerchange', ready);
-    ready();
-  });
+  // An active registration can serve the next navigation even when it has not
+  // claimed this document. Waiting for controllerchange here can stall forever
+  // in browsers/hosts that only attach the controller on navigation.
   sessionStorage.setItem(key, '1');
   location.reload();
   await new Promise(() => {});

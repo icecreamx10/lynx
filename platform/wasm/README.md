@@ -655,3 +655,13 @@ Use a browser with WebGPU for the canvas and Chrome for the embedded frontend.
 
 Static packaging copies compiler maps to `/source-maps/` and rewrites their
 frontend URLs, because some hosts exclude `.rspeedy` dot directories.
+
+Isolation startup waits for an active Service Worker registration and then
+navigates once; it does not require the worker to claim the existing document.
+`verify-isolation-bootstrap.mjs` reproduces the old activation timeout with a
+real worker that omits `clients.claim()`, then verifies first-load recovery and
+subsequent navigation without a reload loop in Chrome and WebKit:
+
+```bash
+PLAYWRIGHT_PATH=/path/to/playwright node platform/wasm/verify-isolation-bootstrap.mjs
+```
